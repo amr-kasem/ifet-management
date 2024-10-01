@@ -1,0 +1,63 @@
+services:
+
+  db:
+    image: postgres:13
+    environment:
+      POSTGRES_DB: report_db
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: always
+
+
+  pgadmin:
+    image: dpage/pgadmin4
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "8081:80"
+    depends_on:
+      - db
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    restart: always
+
+  mosquitto:
+    image: eclipse-mosquitto
+    volumes:
+      - ./deployment/config/mosquitto.conf:/mosquitto/config/mosquitto.conf
+    ports:
+      - "1883:1883"
+      - "8084:8084"
+    restart: always
+
+
+  report-api:
+    build: ./src/management_service/
+    environment:
+      PORT: 8000
+      POSTGRES_DB: report_db
+      DATABASE_URL: "postgresql://user:password@db:5432/report_db"
+    ports:
+      - '8000:8000'
+    depends_on:
+      - db
+    restart: always
+
+
+  ui:
+    image: httpd:2.4
+    volumes:
+      - ./src/ifet_ui_react/:/usr/local/apache2/htdocs/
+      - ./deployment/config/config.json:/usr/local/apache2/htdocs/config.json
+    ports:
+      - '8080:80'
+    restart: always
+
+volumes:
+  postgres_data:
+    driver: local
+  pgadmin_data:
+    driver: local
