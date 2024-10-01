@@ -56,6 +56,15 @@ services:
       - '8080:80'
     restart: always
 
+  production_service:
+    image: httpd:latest
+    ports:
+    - '80:80'
+    restart: always
+    volumes:
+    - ./legacy/production:/usr/local/apache2/htdocs
+    - ./deployment/config/config.json:/usr/local/apache2/htdocs/config.json
+
 volumes:
   postgres_data:
     driver: local

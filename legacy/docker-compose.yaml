@@ -1,0 +1,17 @@
+services:
+  testing_service:
+    image: httpd:latest
+    ports:
+    - '8080:80'
+    restart: always
+    volumes:
+    - ./ifet-ui-react:/usr/local/apache2/htdocs
+    - ./config/config.json:/usr/local/apache2/htdocs/config.json
+  production_service:
+    image: httpd:latest
+    ports:
+    - '80:80'
+    restart: always
+    volumes:
+    - ./production:/usr/local/apache2/htdocs
+    - ./config/config.json:/usr/local/apache2/htdocs/config.json
