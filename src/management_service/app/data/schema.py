@@ -1,4 +1,5 @@
 from typing import List, Optional
+from xmlrpc.client import Boolean
 from pydantic import BaseModel
 
 
@@ -83,6 +84,10 @@ class CyclicTestUpdateSchema(BaseModel):
     type: str
     low_pressure: float
     high_pressure: float
+
+class CyclicTestUpdateStatusSchema(BaseModel):
+
+    current_cycle: int
     
 class CyclicTestSchema(CyclicTestCreateSchema):
     # id: int
@@ -92,7 +97,8 @@ class CyclicTestSchema(CyclicTestCreateSchema):
     permanent_set: Optional[float]
     result: Optional[bool]
     note: Optional[str]
-
+    resume: bool
+    current_cycle: int
     class Config:
         orm_mode = True
 
@@ -120,5 +126,16 @@ class DeviceSchema(DeviceCreateSchema):
     id: int
     projects: List[ProjectSchema]
 
+    turbo_mode: Boolean
+    turbo_slave: Boolean
+    turbo_charger: Optional[int]
+
     class Config:
         orm_mode = True
+        
+class DeviceTurboMaster(BaseModel):
+    slave_id: int
+    turbo_mode: bool
+    
+class DeviceTurboSlave(BaseModel):
+    slave_mode: bool

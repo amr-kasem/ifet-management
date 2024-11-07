@@ -8,6 +8,11 @@ class Device(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
+    
+    turbo_mode = Column(Boolean, nullable=False)
+    turbo_slave = Column(Boolean, nullable=False)
+    turbo_charger = Column(Integer, ForeignKey('devices.id'), nullable=True)
+    
     projects = relationship("Project", back_populates="device", cascade="all, delete-orphan")
 
 class Project(Base):
@@ -99,6 +104,8 @@ class CyclicTest(Base):
     permanent_set = Column(Float, nullable=True)
     result = Column(Boolean, nullable=True)
     note = Column(String, nullable=True)
+    resume = Column(Boolean, nullable=False)
+    current_cycle = Column(Integer, nullable=False)
 
     project_id = Column(Integer, ForeignKey('projects.id'))
     project = relationship("Project", back_populates="cyclic_tests")
