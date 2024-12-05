@@ -8,7 +8,9 @@ class DeflectionCreateSchema(BaseModel):
     max_deflection: float
     permanent_deflection: float
     recovery: float
-
+    class Config:
+        orm_mode = True
+        
 class DeflectionSchema(DeflectionCreateSchema):
     id: int
     class Config:
@@ -20,14 +22,18 @@ class StaticTestCreateSchema(BaseModel):
     index: int
     duration: int
     type: str
-
+    class Config:
+        orm_mode = True
+        
 class StaticTestUpdateSchema(BaseModel):
     # id: int
     type: str
     index: int
     duration: int
     pressure: float
-
+    class Config:
+        orm_mode = True
+        
 class StaticTestSchema(StaticTestCreateSchema):
     id: int
     deflections: List[DeflectionSchema]
@@ -51,6 +57,8 @@ class ShotCreateSchema(BaseModel):
     velocity: float
     result: bool
     note: str
+    class Config:
+        orm_mode = True
     
 class ShotSchema(ShotCreateSchema):
     id: int
@@ -61,7 +69,9 @@ class ShotSchema(ShotCreateSchema):
 class MissileImpactTestCreateSchema(BaseModel):
     missile: str
     missile_weight: float
-    
+    class Config:
+        orm_mode = True
+        
 class MissileImpactTestSchema(MissileImpactTestCreateSchema):
     id: int
     shots: List[ShotSchema]
@@ -76,6 +86,8 @@ class CyclicTestCreateSchema(BaseModel):
     cycles: int
     low_pressure: float
     high_pressure: float
+    class Config:
+        orm_mode = True
     
 class CyclicTestUpdateSchema(BaseModel):
     # id: int
@@ -84,10 +96,14 @@ class CyclicTestUpdateSchema(BaseModel):
     type: str
     low_pressure: float
     high_pressure: float
+    class Config:
+        orm_mode = True
 
 class CyclicTestUpdateStatusSchema(BaseModel):
 
     current_cycle: int
+    class Config:
+        orm_mode = True
     
 class CyclicTestSchema(CyclicTestCreateSchema):
     # id: int
@@ -106,6 +122,8 @@ class ProjectCreateSchema(BaseModel):
     name: str
     inward_design_pressure: float
     outward_design_pressure: float
+    class Config:
+        orm_mode = True
        
 class ProjectSchema(ProjectCreateSchema):
     id: int
@@ -133,9 +151,21 @@ class DeviceSchema(DeviceCreateSchema):
     class Config:
         orm_mode = True
         
+class DeviceMiniSchema(DeviceCreateSchema):
+    id: int
+    turbo_mode: Boolean
+    turbo_slave: Boolean
+    turbo_charger: Optional[int]
+    class Config:
+        orm_mode = True
+        
 class DeviceTurboMaster(BaseModel):
     slave_id: int
     turbo_mode: bool
+    class Config:
+        orm_mode = True
     
 class DeviceTurboSlave(BaseModel):
     slave_mode: bool
+    class Config:
+        orm_mode = True

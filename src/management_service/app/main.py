@@ -41,6 +41,13 @@ app.add_middleware(
 def list_devices(db: Session = Depends(get_db)):
     return db.query(Device).all()
 
+@app.get("/devices/{device_id}", response_model=DeviceMiniSchema)
+def get_device(device_id: int,db: Session = Depends(get_db)):
+    device: Device = db.query(Device).filter(Device.id == device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="No Device found")
+    return device
+
 
 @app.post("/devices/", response_model=DeviceSchema)
 def create_device(device: DeviceCreateSchema, db: Session = Depends(get_db)):
