@@ -249,14 +249,12 @@ def update_static_tests(project_id: int, static_tests_data: List[StaticTestUpdat
     for static_test_data in static_tests_data:
         static_test : StaticTest = db.query(StaticTest).filter(StaticTest.project_id == project_id, StaticTest.index == static_test_data.index).first()
         if static_test and not static_test.finished:
-            static_test.pressure_factor = static_test_data.pressure_factor
             static_test.pressure = static_test_data.pressure
             static_test.duration = static_test_data.duration
             static_test.type = static_test_data.type
             static_test.index = static_test_data.index
         elif not static_test:
             new_static_test = StaticTest(
-                pressure_factor=static_test_data.pressure_factor,
                 pressure=static_test_data.pressure,
                 duration=static_test_data.duration,
                 type=static_test_data.type,
@@ -352,6 +350,27 @@ def update_cyclic_test_status(project_id: int, cyclic_test_index: int, data: Cyc
     db.refresh(cyclic_test)
     return cyclic_test
 
+@app.put("/projects/{project_id}/cyclic_tests/{cyclic_test_index}/reset", response_model=CyclicTestSchema)
+def update_cyclic_test_status(project_id: int, cyclic_test_index: int , db: Session = Depends(get_db)):
+    db_project = db.query(Project).filter(Project.id == project_id).first()
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    cyclic_test:CyclicTest = db.query(CyclicTest).filter(CyclicTest.index == cyclic_test_index, CyclicTest.project_id == project_id).first()
+    if not cyclic_test:
+        raise HTTPException(status_code=404, detail="Cyclic test not found")
+
+    # Check if previous tests are finished
+    previous_tests = db.query(CyclicTest).filter(CyclicTest.project_id == project_id, CyclicTest.index < cyclic_test.index).all()
+    if any(not test.finished for test in previous_tests):
+        raise HTTPException(status_code=400, detail="Previous cyclic tests are not finished")
+
+    cyclic_test.current_cycle = 0
+    cyclic_test.resume = False
+    db.commit()
+    db.refresh(cyclic_test)
+    return cyclic_test
+
 @app.put("/projects/{project_id}/static_tests/{static_test_index}/finish", response_model=StaticTestSchema)
 def finish_static_test(project_id: int, static_test_index: int, db: Session = Depends(get_db)):
     db_project = db.query(Project).filter(Project.id == project_id).first()
@@ -362,10 +381,10 @@ def finish_static_test(project_id: int, static_test_index: int, db: Session = De
     if not static_test:
         raise HTTPException(status_code=404, detail="Static test not found")
 
-    # Check if previous tests are finished
-    previous_tests = db.query(StaticTest).filter(StaticTest.project_id == project_id, StaticTest.index < static_test.index).all()
-    if any(not test.finished for test in previous_tests):
-        raise HTTPException(status_code=400, detail="Previous static tests are not finished")
+    # # Check if previous tests are finished
+    # previous_tests = db.query(StaticTest).filter(StaticTest.project_id == project_id, StaticTest.index < static_test.index).all()
+    # if any(not test.finished for test in previous_tests):
+    #     raise HTTPException(status_code=400, detail="Previous static tests are not finished")
 
     static_test.finished = True
     db.commit()

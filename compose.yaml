@@ -52,6 +52,7 @@ services:
     volumes:
       - ./src/ifet_ui_react/:/usr/local/apache2/htdocs/
       - ./deployment/config/config.json:/usr/local/apache2/htdocs/config.json
+      - ./deployment/config/configCommonValves.json:/usr/local/apache2/htdocs/configCommonValves.json
     ports:
       - '8080:80'
     restart: always

@@ -216,29 +216,13 @@
         "role": ["ACTIVE", "NEGATIVE"],
         "value": 0,
         "address": "4"
-      },
-      {
-        "name": "5",
-        "pin": 15,
-        "role": ["FORCE", "ALWAYSON", "MANUAL"],
-        "value": 0,
-        "address": "5"
-      },
-      {
-        "name": "6",
-        "pin": 15,
-        "role": ["FORCE", "ALWAYSOFF", "MANUAL"],
-        "value": 0,
-        "address": "6"
       }
     ],
     "valves_status": {
       "valve1": 1,
       "valve2": 1,
       "valve3": 1,
-      "valve4": 1,
-      "valve5": 1,
-      "valve6": 1
+      "valve4": 1
     }
   }
 ]
