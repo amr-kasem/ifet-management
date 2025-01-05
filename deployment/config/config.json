@@ -5,7 +5,7 @@
     "current_speed": 0,
     "toggleBtn": "static_load",
     "mqtt": {
-      "broker_host": "172.20.0.1",
+      "broker_host": "10.1.10.185",
       "broker_port": 1883,
       "username": "",
       "password": ""
@@ -147,7 +147,7 @@
     "current_speed": 0,
     "toggleBtn": "static_load",
     "mqtt": {
-      "broker_host": "localhost",
+      "broker_host": "10.1.10.185",
       "broker_port": 1883,
       "username": "",
       "password": ""
@@ -168,7 +168,41 @@
         "debug": false,
         "frequency": 20,
         "value": "",
-        "role": "pressure"
+        "role":"pressure"
+      },
+      {
+        "name": "2",
+        "port": "/dev/ttyACM0",
+        "address": "2",
+        "baudrate": 9600,
+        "bytesize": 8,
+        "parity": "PARITY_NONE",
+        "stopbits": 1,
+        "timeout": 1,
+        "mode": "MODE_RTU",
+        "clear_buffers_before_each_transaction": true,
+        "close_port_after_each_call": true,
+        "debug": false,
+        "frequency": 20,
+        "value": "",
+        "role":"pressure"
+      },
+      {
+        "name": "3",
+        "port": "/dev/ttyACM0",
+        "address": "3",
+        "baudrate": 9600,
+        "bytesize": 8,
+        "parity": "PARITY_NONE",
+        "stopbits": 1,
+        "timeout": 1,
+        "mode": "MODE_RTU",
+        "clear_buffers_before_each_transaction": true,
+        "close_port_after_each_call": true,
+        "debug": false,
+        "frequency": 20,
+        "value": "",
+        "role":"pressure"
       }
     ],
 
