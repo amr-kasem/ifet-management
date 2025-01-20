@@ -5,7 +5,7 @@
     "current_speed": 0,
     "toggleBtn": "static_load",
     "mqtt": {
-      "broker_host": "172.20.0.1",
+      "broker_host": "10.1.10.185",
       "broker_port": 1883,
       "username": "",
       "password": ""
@@ -147,7 +147,7 @@
     "current_speed": 0,
     "toggleBtn": "static_load",
     "mqtt": {
-      "broker_host": "localhost",
+      "broker_host": "10.1.10.185",
       "broker_port": 1883,
       "username": "",
       "password": ""
