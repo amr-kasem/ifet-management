@@ -5,7 +5,7 @@
     "current_speed": 0,
     "toggleBtn": "static_load",
     "mqtt": {
-      "broker_host": "172.20.0.1",
+      "broker_host": "localhost",
       "broker_port": 1883,
       "username": "",
       "password": ""
@@ -216,6 +216,20 @@
         "role": ["ACTIVE", "NEGATIVE"],
         "value": 0,
         "address": "4"
+      },
+      {
+        "name": "5",
+        "pin": 15,
+        "role": ["FORCE", "ALWAYSON", "MANUAL"],
+        "value": 0,
+        "address": "5"
+      },
+      {
+        "name": "6",
+        "pin": 15,
+        "role": ["FORCE", "ALWAYSOFF", "MANUAL"],
+        "value": 0,
+        "address": "6"
       }
     ],
     "valves_status": {
