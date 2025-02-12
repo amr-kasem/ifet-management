@@ -1,6 +1,6 @@
 class CyclicTestPressureCalculator:
     HIGH_PRESSURE_FACTORS = [0.5,0.6,0.8,1.0,1.0,0.8,0.6,0.5]
-    LOW_PRESSURE_FACTORS = [0.2,0.0,0.5,0.3,0.3,0.5,0,0.2]
+    LOW_PRESSURE_FACTORS =  [0.2,0.0,0.5,0.3,0.3,0.5,0.0,0.2]
     CYCLE_COUNT = [3500, 300, 600, 100, 50, 1050, 50, 3050]    
 
     @staticmethod
