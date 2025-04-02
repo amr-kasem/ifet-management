@@ -48,6 +48,14 @@ services:
       - db
     restart: always
 
+  rest-mqtt-gateway:
+    build: ./src/rest_mqtt_gateway/
+    depends_on:
+      - mosquitto
+    volumes:
+      - ./deployment/config/rest_mqtt_gateway.env:/app/.env
+    restart: always
+
 
   sick_api_simulator:
     build:
