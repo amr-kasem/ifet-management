@@ -1,3 +1,5 @@
+version: '3'
+
 services:
 
   db:
@@ -25,12 +27,12 @@ services:
     restart: always
 
   mosquitto:
-    image: eclipse-mosquitto
-    volumes:
-      - ./deployment/config/mosquitto.conf:/mosquitto/config/mosquitto.conf
+    image: eclipse-mosquitto:latest
     ports:
       - "1883:1883"
       - "8084:8084"
+    volumes:
+      - ./deployment/config/mosquitto.conf:/mosquitto/config/mosquitto.conf
     restart: always
 
 
@@ -47,6 +49,36 @@ services:
     restart: always
 
 
+  sick_api_simulator:
+    build:
+      context: ./src/sick
+    ports:
+      - "3197:3197"
+    restart: always
+
+  sick_gateway:
+    build:
+      context: ./src/sick_gateway
+    depends_on:
+      - mosquitto
+      - sick_api_simulator
+    environment:
+      - SICK_API_HOST=sick_api_simulator
+      - SICK_API_PORT=3197
+      - MQTT_BROKER=mosquitto
+      - MQTT_PORT=1883
+      - POLL_INTERVAL=1
+      - LOG_LEVEL=INFO
+      - UNIT_OF_MEASUREMENT=mm  # Options: mm (default) or inch
+      # Configure devices directly using environment variables (alternative to config file)
+      # - SICK_DEVICES=device1:1:1,device2:1:2,pressure_sensor1:2:1
+    volumes:
+      # Mount configuration file
+      - ./deployment/sick-config/config.json:/app/config.json
+      # Mount .env file
+      - ./deployment/sick-config/.env:/app/.env
+    restart: always
+
   ui:
     image: httpd:2.4
     volumes:
@@ -54,17 +86,17 @@ services:
       - ./deployment/config/config.json:/usr/local/apache2/htdocs/config.json
       - ./deployment/config/configCommonValves.json:/usr/local/apache2/htdocs/configCommonValves.json
     ports:
-      - '8080:80'
+      - '80:80'
     restart: always
 
-  production_service:
-    image: httpd:latest
-    ports:
-    - '80:80'
-    restart: always
-    volumes:
-    - ./legacy/production:/usr/local/apache2/htdocs
-    - ./deployment/config/config.json:/usr/local/apache2/htdocs/config.json
+  # production_service:
+  #   image: httpd:latest
+  #   ports:
+  #   - '80:80'
+  #   restart: always
+  #   volumes:
+  #   - ./legacy/production:/usr/local/apache2/htdocs
+  #   - ./deployment/config/config.json:/usr/local/apache2/htdocs/config.json
 
 volumes:
   postgres_data:

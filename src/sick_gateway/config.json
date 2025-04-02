@@ -1,0 +1,25 @@
+{
+  "devices": [
+    {
+      "id": "device1",
+      "master_id": "1",
+      "port_id": "1",
+      "description": "Main position sensor"
+    },
+    {
+      "id": "device2",
+      "master_id": "1",
+      "port_id": "2",
+      "description": "Secondary position sensor"
+    },
+    {
+      "id": "pressure_sensor1",
+      "master_id": "2",
+      "port_id": "1",
+      "description": "Pressure sensor"
+    }
+  ],
+  "mqtt": {
+    "topic_prefix": "sick/devices/"
+  }
+}
