@@ -32,7 +32,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Frontend origin
     allow_credentials=True,
-    allow_methods=["GET","POST","PUT"],  # Allow all HTTP methods (POST, GET, etc.)
+    allow_methods=["GET","POST","PUT", "DELETE"],  # Allow all HTTP methods (POST, GET, etc.)
     allow_headers=["*"],  # Allow all headers
 )
 
@@ -82,7 +82,7 @@ def get_projects_by_device_id(device_id: int, db: Session = Depends(get_db)):
     if not projects:
         raise HTTPException(status_code=404, detail="No projects found for this device_id")
     return projects
-    
+
 # # List all projects
 # @app.get("/projects/", response_model=List[ProjectSchema])
 # def list_projects(db: Session = Depends(get_db)):
@@ -124,6 +124,7 @@ def create_project_for_device(device_id: int, project: ProjectCreateSchema, db: 
             finished=False,
             resume=False,
             current_cycle=0,
+            preset=True,
         )
         db.add(cyclic_test)
     
@@ -138,6 +139,7 @@ def create_project_for_device(device_id: int, project: ProjectCreateSchema, db: 
             index=j,
             project_id=db_project.id,
             finished=False,
+            preset=True,
         )
         db.add(static_test)
     
@@ -162,7 +164,7 @@ def update_project(project_id: int, project_data: ProjectCreateSchema, db: Sessi
         p, d = StaticTestPressureCalculator.get_static_test_data(
             db_project.inward_design_pressure if j < 3 else db_project.outward_design_pressure, j
         )
-        static_test = db.query(StaticTest).filter(StaticTest.project_id == project_id, StaticTest.index == j).first()
+        static_test = db.query(StaticTest).filter(StaticTest.project_id == project_id, StaticTest.index == j, StaticTest.preset == True).first()
         if static_test and not static_test.finished:
             static_test.pressure = p
             static_test.duration = d
@@ -174,7 +176,8 @@ def update_project(project_id: int, project_data: ProjectCreateSchema, db: Sessi
                 type="inward" if j < 3 else "outward",
                 index=j,
                 project_id=project_id,
-                finished=False
+                finished=False,
+                preset=True,
             )
             db.add(new_static_test)
 
@@ -183,7 +186,7 @@ def update_project(project_id: int, project_data: ProjectCreateSchema, db: Sessi
         h, l, c = CyclicTestPressureCalculator.get_cylcic_test_data(
             db_project.inward_design_pressure if i < 4 else db_project.outward_design_pressure, i
         )
-        cyclic_test = db.query(CyclicTest).filter(CyclicTest.project_id == project_id, CyclicTest.index == i).first()
+        cyclic_test = db.query(CyclicTest).filter(CyclicTest.project_id == project_id, CyclicTest.index == i, CyclicTest.preset == True).first()
         if cyclic_test and not cyclic_test.finished:
             cyclic_test.high_pressure = h
             cyclic_test.low_pressure = l
@@ -199,6 +202,7 @@ def update_project(project_id: int, project_data: ProjectCreateSchema, db: Sessi
                 finished=False,
                 resume=False,
                 current_cycle=0,
+                preset=True,
             )
             db.add(new_cyclic_test)
     
@@ -208,6 +212,204 @@ def update_project(project_id: int, project_data: ProjectCreateSchema, db: Sessi
     return db_project
 
 
+@app.post("/projects/{project_id}/static_tests/", response_model=StaticTestSchema)  
+def create_static_test(project_id: int, static_test_data: StaticTestCreateSchema, db: Session = Depends(get_db)):
+    db_project : Project = db.query(Project).filter(Project.id == project_id).first()
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")    
+    
+    static_test = StaticTest(
+        project_id=project_id,
+        index=len(db_project.static_tests),
+        type=static_test_data.type,
+        preset=False,
+        finished=False,
+        duration=static_test_data.duration,
+        pressure=static_test_data.pressure,
+        pressure_factor="",
+    )
+    
+    db.add(static_test)
+    db.commit()
+    db.refresh(static_test)
+    return static_test
+
+@app.put("/projects/{project_id}/static_tests", response_model=ProjectSchema)
+def update_static_tests(project_id: int, static_tests_data: List[StaticTestUpdateSchema], db: Session = Depends(get_db)):
+    db_project = db.query(Project).filter(Project.id == project_id).first()
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Update static tests
+    for static_test_data in static_tests_data:
+        static_test : StaticTest = db.query(StaticTest).filter(StaticTest.project_id == project_id, StaticTest.index == static_test_data.index).first()
+        if static_test and not static_test.finished:
+            static_test.pressure = static_test_data.pressure
+            static_test.duration = static_test_data.duration
+            static_test.type = static_test_data.type
+            static_test.index = static_test_data.index
+        elif not static_test:
+            new_static_test = StaticTest(
+                pressure=static_test_data.pressure,
+                duration=static_test_data.duration,
+                type=static_test_data.type,
+                index=static_test_data.index,
+                project_id=project_id,
+                preset=False,
+            )
+            db.add(new_static_test)
+
+    db.commit()
+    db.refresh(db_project)
+    return db_project
+# Get a specific StaticTest
+@app.get("/projects/{project_id}/static-tests/{static_test_index}/", response_model=StaticTestSchema)
+def get_static_test(project_id: int, static_test_index: int, db: Session = Depends(get_db)):
+    static_test = db.query(StaticTest).filter(StaticTest.index == static_test_index, StaticTest.project_id == project_id).first()
+    if not static_test:
+        raise HTTPException(status_code=404, detail="StaticTest not found")
+    return static_test
+
+# Update a specific StaticTest
+@app.put("/projects/{project_id}/static-tests/{static_test_index}/", response_model=StaticTestSchema)
+def update_static_test(project_id: int, static_test_index: int, static_test_data: StaticTestUpdateSchema, db: Session = Depends(get_db)):
+    static_test = db.query(StaticTest).filter(StaticTest.index == static_test_index, StaticTest.project_id == project_id).first()
+    if not static_test:
+        raise HTTPException(status_code=404, detail="StaticTest not found")
+    
+    if static_test.finished:
+        raise HTTPException(status_code=400, detail="Cannot update a finished StaticTest")
+    
+    for key, value in static_test_data.dict().items():
+        setattr(static_test, key, value)
+    db.commit()
+    db.refresh(static_test)
+    return static_test
+
+
+# Delete a StaticTest
+@app.delete("/projects/{project_id}/static-tests/{static_test_index}/", response_model=dict)
+def delete_static_test(project_id: int, static_test_index: int, db: Session = Depends(get_db)):
+    static_test : StaticTest = db.query(StaticTest).filter(StaticTest.index == static_test_index, StaticTest.project_id == project_id).first()
+    if not static_test:
+        raise HTTPException(status_code=404, detail="StaticTest not found")
+    if static_test.preset:
+        raise HTTPException(status_code=400, detail="Cannot delete a preset StaticTest")
+    if static_test.trials:
+        raise HTTPException(status_code=400, detail="Cannot delete a StaticTest with trials")
+    
+    db.delete(static_test)
+    db.commit()
+    return {"detail": "StaticTest deleted successfully"}
+
+
+@app.post("/projects/{project_id}/static_tests/{static_test_index}/trials", response_model=StaticTestResultSchema)
+def create_static_test_trial(project_id: int, static_test_index: int, trial_data: StaticTestResultCreateSchema, db: Session = Depends(get_db)):
+    db_project = db.query(Project).filter(Project.id == project_id).first()
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    static_test : StaticTest = db.query(StaticTest).filter(StaticTest.index == static_test_index, StaticTest.project_id == project_id).first()
+    if not static_test:
+        raise HTTPException(status_code=404, detail="Static test not found")
+    
+    new_trial = StaticTestResult(
+        static_test_id=static_test.id,
+        trial_number=len(static_test.trials)+1,
+        result=None,
+        note=None
+    )   
+    
+    db.add(new_trial)
+    db.flush()  # Flush to get the new ID without committing
+    
+    for d in trial_data.deflections:
+        new_deflection = Deflection(
+            deflection_gauge=d.deflection_gauge,
+            max_deflection=d.max_deflection,
+            permanent_deflection=d.permanent_deflection,
+            recovery=d.recovery,
+            test_id=new_trial.id,
+        )
+        db.add(new_deflection)
+        
+    db.commit()
+    db.refresh(new_trial)
+    return new_trial
+
+
+@app.get("/projects/{project_id}/static_tests/{static_test_index}/trials", response_model=List[StaticTestResultSchema])
+def get_static_test_trials(project_id: int, static_test_index: int, db: Session = Depends(get_db)):
+    db_project = db.query(Project).filter(Project.id == project_id).first()
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    static_test = db.query(StaticTest).filter(StaticTest.index == static_test_index, StaticTest.project_id == project_id).first()
+    if not static_test:
+        raise HTTPException(status_code=404, detail="Static test not found")
+    
+    return static_test.trials
+
+
+
+@app.put("/projects/{project_id}/static_tests/{static_test_index}/finish", response_model=StaticTestSchema)
+def finish_static_test(project_id: int, static_test_index: int, db: Session = Depends(get_db)):
+    db_project = db.query(Project).filter(Project.id == project_id).first()
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    static_test = db.query(StaticTest).filter(StaticTest.index == static_test_index, StaticTest.project_id == project_id).first()
+    static_test_result = db.query(StaticTestResult).filter(StaticTestResult.static_test_id == static_test.id).first()
+    if not static_test_result:
+        raise HTTPException(status_code=404, detail="Static test has no results, please add at least one trial")
+    if not static_test:
+        raise HTTPException(status_code=404, detail="Static test not found")
+
+    # # Check if previous tests are finished
+    # previous_tests = db.query(StaticTest).filter(StaticTest.project_id == project_id, StaticTest.index < static_test.index).all()
+    # if any(not test.finished for test in previous_tests):
+    #     raise HTTPException(status_code=400, detail="Previous static tests are not finished")
+
+    static_test.finished = True
+    db.commit()
+    db.refresh(static_test)
+    return static_test
+
+
+
+
+
+
+@app.post("/projects/{project_id}/cyclic-tests/", response_model=CyclicTestSchema)
+def create_cyclic_test(project_id: int, cyclic_test_data: CyclicTestCreateSchema, db: Session = Depends(get_db)):
+    db_project : Project = db.query(Project).filter(Project.id == project_id).first()
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    cyclic_test = CyclicTest(
+        project_id=project_id,
+        index=len(db_project.cyclic_tests),
+        type=cyclic_test_data.type,
+        cycles=cyclic_test_data.cycles,
+        low_pressure=cyclic_test_data.low_pressure,
+        high_pressure=cyclic_test_data.high_pressure,
+        preset=False,
+        finished=False,
+        resume=False,
+        current_cycle=0,
+    )
+    
+    db.add(cyclic_test)
+    db.commit()
+    db.refresh(cyclic_test)
+    return cyclic_test
+
+@app.get("/projects/{project_id}/cyclic-tests/{cyclic_test_index}/", response_model=CyclicTestSchema)
+def get_cyclic_test(project_id: int, cyclic_test_index: int, db: Session = Depends(get_db)):
+    cyclic_test = db.query(CyclicTest).filter(CyclicTest.index == cyclic_test_index, CyclicTest.project_id == project_id).first()
+    if not cyclic_test:
+        raise HTTPException(status_code=404, detail="StaticTest not found")
+    return cyclic_test
 
 @app.put("/projects/{project_id}/cyclic_tests", response_model=ProjectSchema)
 def update_cyclic_tests(project_id: int, cyclic_tests_data: List[CyclicTestUpdateSchema], db: Session = Depends(get_db)):
@@ -232,6 +434,7 @@ def update_cyclic_tests(project_id: int, cyclic_tests_data: List[CyclicTestUpdat
                 project_id=project_id,
                 resume=False,
                 current_cycle=0,
+                preset=False,
             )
             db.add(new_cyclic_test)
 
@@ -239,33 +442,91 @@ def update_cyclic_tests(project_id: int, cyclic_tests_data: List[CyclicTestUpdat
     db.refresh(db_project)
     return db_project
 
-@app.put("/projects/{project_id}/static_tests", response_model=ProjectSchema)
-def update_static_tests(project_id: int, static_tests_data: List[StaticTestUpdateSchema], db: Session = Depends(get_db)):
-    db_project = db.query(Project).filter(Project.id == project_id).first()
-    if not db_project:
-        raise HTTPException(status_code=404, detail="Project not found")
 
-    # Update static tests
-    for static_test_data in static_tests_data:
-        static_test : StaticTest = db.query(StaticTest).filter(StaticTest.project_id == project_id, StaticTest.index == static_test_data.index).first()
-        if static_test and not static_test.finished:
-            static_test.pressure = static_test_data.pressure
-            static_test.duration = static_test_data.duration
-            static_test.type = static_test_data.type
-            static_test.index = static_test_data.index
-        elif not static_test:
-            new_static_test = StaticTest(
-                pressure=static_test_data.pressure,
-                duration=static_test_data.duration,
-                type=static_test_data.type,
-                index=static_test_data.index,
-                project_id=project_id
-            )
-            db.add(new_static_test)
 
+# Update a specific CyclicTest
+@app.put("/projects/{project_id}/cyclic-tests/{cyclic_test_index}/", response_model=CyclicTestSchema)
+def update_cyclic_test(project_id: int, cyclic_test_index: int, cyclic_test_data: CyclicTestUpdateSchema, db: Session = Depends(get_db)):
+    cyclic_test = db.query(CyclicTest).filter(CyclicTest.index == cyclic_test_index, CyclicTest.project_id == project_id).first()
+    if not cyclic_test:
+        raise HTTPException(status_code=404, detail="CyclicTest not found")
+    if cyclic_test.finished:
+        raise HTTPException(status_code=400, detail="Cannot update a finished CyclicTest")
+
+    for key, value in cyclic_test_data.dict().items():
+        setattr(cyclic_test, key, value)
     db.commit()
-    db.refresh(db_project)
-    return db_project
+    db.refresh(cyclic_test)
+    return cyclic_test
+
+@app.delete("/projects/{project_id}/cyclic-tests/{cyclic_test_index}/", response_model=dict)
+def delete_cyclic_test(project_id: int, cyclic_test_index: int, db: Session = Depends(get_db)):
+    cyclic_test : CyclicTest = db.query(CyclicTest).filter(CyclicTest.index == cyclic_test_index, CyclicTest.project_id == project_id).first()
+    if not cyclic_test:
+        raise HTTPException(status_code=404, detail="CyclicTest not found")
+    if cyclic_test.preset:
+        raise HTTPException(status_code=400, detail="Cannot delete a preset CyclicTest")
+    if cyclic_test.trials:
+        raise HTTPException(status_code=400, detail="Cannot delete a CyclicTest with trials")
+
+    db.delete(cyclic_test)
+    db.commit()
+    return {"detail": "CyclicTest deleted successfully"}
+
+    
+@app.post("/projects/{project_id}/cyclic-tests/{cyclic_test_index}/trials", response_model=CyclicTestResultSchema)
+def create_cyclic_test_trial(project_id: int, cyclic_test_index: int, trial_data: CyclicTestResultCreateSchema, db: Session = Depends(get_db)):
+    cyclic_test : CyclicTest = db.query(CyclicTest).filter(CyclicTest.index == cyclic_test_index, CyclicTest.project_id == project_id).first()
+    if not cyclic_test:
+        raise HTTPException(status_code=404, detail="CyclicTest not found")
+    
+    new_trial = CyclicTestResult(
+        cyclic_test_id=cyclic_test.id,
+        trial_number=len(cyclic_test.trials)+1,
+        result=None,
+        note=None
+    )
+
+    db.add(new_trial)
+    db.flush()
+    
+    for d in trial_data.deflections:
+        new_deflection = Deflection(
+            deflection_gauge=d.deflection_gauge,
+            max_deflection=d.max_deflection,
+            permanent_deflection=d.permanent_deflection,
+            recovery=d.recovery,
+            test_id=new_trial.id,
+        )
+        db.add(new_deflection)  
+        
+    db.commit()
+    db.refresh(new_trial)
+    return new_trial
+
+
+@app.get("/projects/{project_id}/cyclic-tests/{cyclic_test_index}/trials", response_model=List[CyclicTestResultSchema])
+def get_cyclic_test_trials(project_id: int, cyclic_test_index: int, db: Session = Depends(get_db)):
+    cyclic_test : CyclicTest = db.query(CyclicTest).filter(CyclicTest.index == cyclic_test_index, CyclicTest.project_id == project_id).first()
+    if not cyclic_test:
+        raise HTTPException(status_code=404, detail="CyclicTest not found")
+    return cyclic_test.trials
+
+
+
+
+@app.get("/projects/{project_id}/next-cyclic-test", response_model=CyclicTestSchema)
+def get_next_cyclic_test(project_id: int, db: Session = Depends(get_db)):
+    project : Project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    all_tests : List[CyclicTest] = project.cyclic_tests
+    all_tests.sort(key=lambda v : v.index)
+    for t in all_tests:
+        if t.finished: continue
+        else: return t
+    return HTTPException(status_code=404, detail="No Test Available")
+
 
 @app.put("/projects/{project_id}/cyclic_tests/{cyclic_test_index}/start", response_model=CyclicTestSchema)
 def start_cyclic_test(project_id: int, cyclic_test_index: int, db: Session = Depends(get_db)):
@@ -283,49 +544,6 @@ def start_cyclic_test(project_id: int, cyclic_test_index: int, db: Session = Dep
         raise HTTPException(status_code=400, detail="Previous cyclic tests are not finished")
     if cyclic_test.finished : raise HTTPException(status_code=400, detail="Already finished")
     cyclic_test.resume = True
-    db.commit()
-    db.refresh(cyclic_test)
-    return cyclic_test
-
-@app.put("/projects/{project_id}/cyclic_tests/{cyclic_test_index}/reset", response_model=CyclicTestSchema)
-def reset_cyclic_test(project_id: int, cyclic_test_index: int, db: Session = Depends(get_db)):
-    db_project = db.query(Project).filter(Project.id == project_id).first()
-    if not db_project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    cyclic_test = db.query(CyclicTest).filter(CyclicTest.index == cyclic_test_index, CyclicTest.project_id == project_id).first()
-    if not cyclic_test:
-        raise HTTPException(status_code=404, detail="Cyclic test not found")
-
-    # Check if previous tests are finished
-    previous_tests = db.query(CyclicTest).filter(CyclicTest.project_id == project_id, CyclicTest.index < cyclic_test.index).all()
-    if any(not test.finished for test in previous_tests):
-        raise HTTPException(status_code=400, detail="Previous cyclic tests are not finished")
-    if cyclic_test.finished : raise HTTPException(status_code=400, detail="Already finished")
-    cyclic_test.resume = False
-    cyclic_test.current_cycle = 0
-    db.commit()
-    db.refresh(cyclic_test)
-    return cyclic_test
-
-@app.put("/projects/{project_id}/cyclic_tests/{cyclic_test_index}/finish", response_model=CyclicTestSchema)
-def finish_cyclic_test(project_id: int, cyclic_test_index: int, db: Session = Depends(get_db)):
-    db_project = db.query(Project).filter(Project.id == project_id).first()
-    if not db_project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    cyclic_test : CyclicTest = db.query(CyclicTest).filter(CyclicTest.index == cyclic_test_index, CyclicTest.project_id == project_id).first()
-    if not cyclic_test:
-        raise HTTPException(status_code=404, detail="Cyclic test not found")
-
-    # Check if previous tests are finished
-    previous_tests = db.query(CyclicTest).filter(CyclicTest.project_id == project_id, CyclicTest.index < cyclic_test.index).all()
-    if any(not test.finished for test in previous_tests):
-        raise HTTPException(status_code=400, detail="Previous cyclic tests are not finished")
-
-    cyclic_test.finished = True
-    cyclic_test.resume = False
-    cyclic_test.current_cycle = 0
     db.commit()
     db.refresh(cyclic_test)
     return cyclic_test
@@ -351,7 +569,7 @@ def update_cyclic_test_status(project_id: int, cyclic_test_index: int, data: Cyc
     return cyclic_test
 
 @app.put("/projects/{project_id}/cyclic_tests/{cyclic_test_index}/reset", response_model=CyclicTestSchema)
-def update_cyclic_test_status(project_id: int, cyclic_test_index: int , db: Session = Depends(get_db)):
+def reset_cyclic_test_status(project_id: int, cyclic_test_index: int , db: Session = Depends(get_db)):
     db_project = db.query(Project).filter(Project.id == project_id).first()
     if not db_project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -371,312 +589,28 @@ def update_cyclic_test_status(project_id: int, cyclic_test_index: int , db: Sess
     db.refresh(cyclic_test)
     return cyclic_test
 
-@app.put("/projects/{project_id}/static_tests/{static_test_index}/finish", response_model=StaticTestSchema)
-def finish_static_test(project_id: int, static_test_index: int, db: Session = Depends(get_db)):
+
+@app.put("/projects/{project_id}/cyclic_tests/{cyclic_test_index}/finish", response_model=CyclicTestSchema)
+def finish_cyclic_test(project_id: int, cyclic_test_index: int, db: Session = Depends(get_db)):
     db_project = db.query(Project).filter(Project.id == project_id).first()
     if not db_project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    static_test = db.query(StaticTest).filter(StaticTest.index == static_test_index, StaticTest.project_id == project_id).first()
-    if not static_test:
-        raise HTTPException(status_code=404, detail="Static test not found")
-
-    # # Check if previous tests are finished
-    # previous_tests = db.query(StaticTest).filter(StaticTest.project_id == project_id, StaticTest.index < static_test.index).all()
-    # if any(not test.finished for test in previous_tests):
-    #     raise HTTPException(status_code=400, detail="Previous static tests are not finished")
-
-    static_test.finished = True
-    db.commit()
-    db.refresh(static_test)
-    return static_test
-
-
-# @app.post("/projects/", response_model=ProjectSchema)
-# def create_project(project: ProjectCreateSchema, db: Session = Depends(get_db)):
-#     db_project = Project(
-#         name=project.name,
-#         device_id=project.device_id,
-#         static_tests=[],
-#         infiltration_tests=[],
-#         missile_impact_tests=[],
-#         cyclic_tests=[],
-#     )
-#     db.add(db_project)
-#     db.commit()
-#     db.refresh(db_project)
-
-#     # Create 8 cyclic tests
-#     for i in range(8):
-#         cyclic_test = CyclicTest(
-#             type="inward" if i < 4 else "outward",
-#             cycles=0,  # Initialize with 0 cycles
-#             low_pressure=0.0,  # Initialize with 0.0
-#             high_pressure=0.0,  # Initialize with 0.0
-#             project_id=db_project.id
-#         )
-#         db.add(cyclic_test)
-    
-#     # Create 6 static tests
-#     for _ in range(6):
-#         static_test = StaticTest(
-#             pressure_factor=0.0,  # Initialize with 0.0
-#             pressure=0.0,  # Initialize with 0.0
-#             project_id=db_project.id
-#         )
-#         db.add(static_test)
-    
-#     db.commit()
-#     db.refresh(db_project)
-#     return db_project
-# Add StaticTest to Project
-@app.get("/projects/{project_id}/next-cyclic-test", response_model=CyclicTestSchema)
-def get_next_cyclic_test(project_id: int, db: Session = Depends(get_db)):
-    project : Project = db.query(Project).filter(Project.id == project_id).first()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    all_tests : List[CyclicTest] = project.cyclic_tests
-    all_tests.sort(key=lambda v : v.index)
-    for t in all_tests:
-        if t.finished: continue
-        else: return t
-    return HTTPException(status_code=404, detail="No Test Available")
-
-# Get a specific StaticTest
-@app.get("/static-tests/{static_test_id}/", response_model=StaticTestSchema)
-def get_static_test(static_test_id: int, db: Session = Depends(get_db)):
-    static_test = db.query(StaticTest).filter(StaticTest.id == static_test_id).first()
-    if not static_test:
-        raise HTTPException(status_code=404, detail="StaticTest not found")
-    return static_test
-
-# Update a specific StaticTest
-@app.put("/static-tests/{static_test_id}/", response_model=StaticTestSchema)
-def update_static_test(static_test_id: int, static_test_data: StaticTestUpdateSchema, db: Session = Depends(get_db)):
-    static_test = db.query(StaticTest).filter(StaticTest.id == static_test_id).first()
-    if not static_test:
-        raise HTTPException(status_code=404, detail="StaticTest not found")
-    
-    if static_test.finished:
-        raise HTTPException(status_code=400, detail="Cannot update a finished StaticTest")
-    
-    for key, value in static_test_data.dict().items():
-        setattr(static_test, key, value)
-    db.commit()
-    db.refresh(static_test)
-    return static_test
-
-# # Delete a StaticTest
-# @app.delete("/static-tests/{static_test_id}/", response_model=dict)
-# def delete_static_test(static_test_id: int, db: Session = Depends(get_db)):
-#     static_test = db.query(StaticTest).filter(StaticTest.id == static_test_id).first()
-#     if not static_test:
-#         raise HTTPException(status_code=404, detail="StaticTest not found")
-    
-#     db.delete(static_test)
-#     db.commit()
-#     return {"detail": "StaticTest deleted successfully"}
-
-
-# Create a Deflection within a StaticTest
-@app.post("/static-tests/{static_test_id}/deflections/", response_model=DeflectionSchema)
-def create_deflection(static_test_id: int, deflection_data: DeflectionCreateSchema, db: Session = Depends(get_db)):
-    static_test = db.query(StaticTest).filter(StaticTest.id == static_test_id).first()
-    if not static_test:
-        raise HTTPException(status_code=404, detail="StaticTest not found")
-
-    new_deflection = Deflection(**deflection_data.dict(), static_test_id=static_test_id)
-    db.add(new_deflection)
-    db.commit()
-    db.refresh(new_deflection)
-    return new_deflection
-
-# Update a Deflection
-@app.put("/deflections/{deflection_id}/", response_model=DeflectionSchema)
-def update_deflection(deflection_id: int, deflection_data: DeflectionCreateSchema, db: Session = Depends(get_db)):
-    deflection = db.query(Deflection).filter(Deflection.id == deflection_id).first()
-    if not deflection:
-        raise HTTPException(status_code=404, detail="Deflection not found")
-
-    for key, value in deflection_data.dict().items():
-        setattr(deflection, key, value)
-    db.commit()
-    db.refresh(deflection)
-    return deflection
-
-# Delete a Deflection
-@app.delete("/deflections/{deflection_id}/", response_model=dict)
-def delete_deflection(deflection_id: int, db: Session = Depends(get_db)):
-    deflection = db.query(Deflection).filter(Deflection.id == deflection_id).first()
-    if not deflection:
-        raise HTTPException(status_code=404, detail="Deflection not found")
-
-    db.delete(deflection)
-    db.commit()
-    return {"detail": "Deflection deleted successfully"}
-
-
-# Create an InfiltrationTest within a Project
-# @app.post("/projects/{project_id}/infiltration-tests/", response_model=InfiltrationTestSchema)
-# def create_infiltration_test(project_id: int, infiltration_test_data: InfiltrationTestCreateSchema, db: Session = Depends(get_db)):
-#     project = db.query(Project).filter(Project.id == project_id).first()
-#     if not project:
-#         raise HTTPException(status_code=404, detail="Project not found")
-
-#     new_infiltration_test = InfiltrationTest(**infiltration_test_data.dict(), project_id=project_id)
-#     db.add(new_infiltration_test)
-#     db.commit()
-#     db.refresh(new_infiltration_test)
-#     return new_infiltration_test
-
-# Update a specific InfiltrationTest
-# @app.put("/infiltration-tests/{infiltration_test_id}/", response_model=InfiltrationTestSchema)
-# def update_infiltration_test(infiltration_test_id: int, infiltration_test_data: InfiltrationTestCreateSchema, db: Session = Depends(get_db)):
-#     infiltration_test = db.query(InfiltrationTest).filter(InfiltrationTest.id == infiltration_test_id).first()
-#     if not infiltration_test:
-#         raise HTTPException(status_code=404, detail="InfiltrationTest not found")
-
-#     for key, value in infiltration_test_data.dict().items():
-#         setattr(infiltration_test, key, value)
-#     db.commit()
-#     db.refresh(infiltration_test)
-#     return infiltration_test
-
-# Delete an InfiltrationTest
-# @app.delete("/infiltration-tests/{infiltration_test_id}/", response_model=dict)
-# def delete_infiltration_test(infiltration_test_id: int, db: Session = Depends(get_db)):
-#     infiltration_test = db.query(InfiltrationTest).filter(InfiltrationTest.id == infiltration_test_id).first()
-#     if not infiltration_test:
-#         raise HTTPException(status_code=404, detail="InfiltrationTest not found")
-
-#     db.delete(infiltration_test)
-#     db.commit()
-#     return {"detail": "InfiltrationTest deleted successfully"}
-
-
-
-# Create a CyclicTest within a Project
-# @app.post("/projects/{project_id}/cyclic-tests/", response_model=CyclicTestSchema)
-# def create_cyclic_test(project_id: int, cyclic_test_data: CyclicTestCreateSchema, db: Session = Depends(get_db)):
-#     project = db.query(Project).filter(Project.id == project_id).first()
-#     if not project:
-#         raise HTTPException(status_code=404, detail="Project not found")
-
-#     new_cyclic_test = CyclicTest(**cyclic_test_data.dict(), project_id=project_id)
-#     db.add(new_cyclic_test)
-#     db.commit()
-#     db.refresh(new_cyclic_test)
-#     return new_cyclic_test
-
-@app.get("/cyclic-tests/{cyclic_test_id}/", response_model=CyclicTestSchema)
-def get_cyclic_test(cyclic_test_id: int, cyclic_test_data: CyclicTestUpdateSchema, db: Session = Depends(get_db)):
-    cyclic_test = db.query(CyclicTest).filter(CyclicTest.id == cyclic_test_id).first()
+    cyclic_test : CyclicTest = db.query(CyclicTest).filter(CyclicTest.index == cyclic_test_index, CyclicTest.project_id == project_id).first()
     if not cyclic_test:
-        raise HTTPException(status_code=404, detail="StaticTest not found")
-    return cyclic_test
+        raise HTTPException(status_code=404, detail="Cyclic test not found")
 
-# Update a specific CyclicTest
-@app.put("/cyclic-tests/{cyclic_test_id}/", response_model=CyclicTestSchema)
-def update_cyclic_test(cyclic_test_id: int, cyclic_test_data: CyclicTestUpdateSchema, db: Session = Depends(get_db)):
-    cyclic_test = db.query(CyclicTest).filter(CyclicTest.id == cyclic_test_id).first()
-    if not cyclic_test:
-        raise HTTPException(status_code=404, detail="CyclicTest not found")
-    if cyclic_test.finished:
-        raise HTTPException(status_code=400, detail="Cannot update a finished CyclicTest")
+    # Check if previous tests are finished
+    previous_tests = db.query(CyclicTest).filter(CyclicTest.project_id == project_id, CyclicTest.index < cyclic_test.index).all()
+    if any(not test.finished for test in previous_tests):
+        raise HTTPException(status_code=400, detail="Previous cyclic tests are not finished")
 
-    for key, value in cyclic_test_data.dict().items():
-        setattr(cyclic_test, key, value)
+    cyclic_test.finished = True
+    cyclic_test.resume = False
+    cyclic_test.current_cycle = 0
     db.commit()
     db.refresh(cyclic_test)
     return cyclic_test
-
-# Delete a CyclicTest
-# @app.delete("/cyclic-tests/{cyclic_test_id}/", response_model=dict)
-# def delete_cyclic_test(cyclic_test_id: int, db: Session = Depends(get_db)):
-#     cyclic_test = db.query(CyclicTest).filter(CyclicTest.id == cyclic_test_id).first()
-#     if not cyclic_test:
-#         raise HTTPException(status_code=404, detail="CyclicTest not found")
-
-#     db.delete(cyclic_test)
-#     db.commit()
-#     return {"detail": "CyclicTest deleted successfully"}
-
-
-
-# Create a MissileImpactTest within a Project
-# @app.post("/projects/{project_id}/missile-impact-tests/", response_model=MissileImpactTestSchema)
-# def create_missile_impact_test(project_id: int, missile_impact_test_data: MissileImpactTestCreateSchema, db: Session = Depends(get_db)):
-#     project = db.query(Project).filter(Project.id == project_id).first()
-#     if not project:
-#         raise HTTPException(status_code=404, detail="Project not found")
-
-#     new_missile_impact_test = MissileImpactTest(**missile_impact_test_data.dict(), project_id=project_id)
-#     db.add(new_missile_impact_test)
-#     db.commit()
-#     db.refresh(new_missile_impact_test)
-#     return new_missile_impact_test
-
-# Update a specific MissileImpactTest
-# @app.put("/missile-impact-tests/{missile_impact_test_id}/", response_model=MissileImpactTestSchema)
-# def update_missile_impact_test(missile_impact_test_id: int, missile_impact_test_data: MissileImpactTestCreateSchema, db: Session = Depends(get_db)):
-#     missile_impact_test = db.query(MissileImpactTest).filter(MissileImpactTest.id == missile_impact_test_id).first()
-#     if not missile_impact_test:
-#         raise HTTPException(status_code=404, detail="MissileImpactTest not found")
-
-#     for key, value in missile_impact_test_data.dict().items():
-#         setattr(missile_impact_test, key, value)
-#     db.commit()
-#     db.refresh(missile_impact_test)
-#     return missile_impact_test
-
-# Delete a MissileImpactTest
-# @app.delete("/missile-impact-tests/{missile_impact_test_id}/", response_model=dict)
-# def delete_missile_impact_test(missile_impact_test_id: int, db: Session = Depends(get_db)):
-#     missile_impact_test = db.query(MissileImpactTest).filter(MissileImpactTest.id == missile_impact_test_id).first()
-#     if not missile_impact_test:
-#         raise HTTPException(status_code=404, detail="MissileImpactTest not found")
-
-#     db.delete(missile_impact_test)
-#     db.commit()
-#     return {"detail": "MissileImpactTest deleted successfully"}
-
-# Create a Shot within a MissileImpactTest
-# @app.post("/missile-impact-tests/{missile_impact_test_id}/shots/", response_model=ShotSchema)
-# def create_shot(missile_impact_test_id: int, shot_data: ShotCreateSchema, db: Session = Depends(get_db)):
-#     missile_impact_test = db.query(MissileImpactTest).filter(MissileImpactTest.id == missile_impact_test_id).first()
-#     if not missile_impact_test:
-#         raise HTTPException(status_code=404, detail="MissileImpactTest not found")
-
-#     new_shot = Shot(**shot_data.dict(), missile_impact_test_id=missile_impact_test_id)
-#     db.add(new_shot)
-#     db.commit()
-#     db.refresh(new_shot)
-#     return new_shot
-
-# Update a specific Shot
-# @app.put("/shots/{shot_id}/", response_model=ShotSchema)
-# def update_shot(shot_id: int, shot_data: ShotCreateSchema, db: Session = Depends(get_db)):
-#     shot = db.query(Shot).filter(Shot.id == shot_id).first()
-#     if not shot:
-#         raise HTTPException(status_code=404, detail="Shot not found")
-
-#     for key, value in shot_data.dict().items():
-#         setattr(shot, key, value)
-#     db.commit()
-#     db.refresh(shot)
-#     return shot
-
-# Delete a Shot
-# @app.delete("/shots/{shot_id}/", response_model=dict)
-# def delete_shot(shot_id: int, db: Session = Depends(get_db)):
-#     shot = db.query(Shot).filter(Shot.id == shot_id).first()
-#     if not shot:
-#         raise HTTPException(status_code=404, detail="Shot not found")
-
-#     db.delete(shot)
-#     db.commit()
-#     return {"detail": "Shot deleted successfully"}
-
 
 
 @app.put("/devices/{master_id}/turbo_master", response_model=DeviceSchema)
