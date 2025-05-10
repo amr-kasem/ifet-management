@@ -46,6 +46,7 @@ class StaticTestResultSchema(StaticTestResultCreateSchema):
 class StaticTestSchema(StaticTestCreateSchema):
     id: int
     finished: bool
+    index: int
     trials: List[StaticTestResultSchema]
     preset: bool
     class Config:
