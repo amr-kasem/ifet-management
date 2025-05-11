@@ -47,7 +47,7 @@ class Deflection(Base):
     __tablename__ = "deflections"
 
     id = Column(Integer, primary_key=True, index=True)
-    deflection_gauge = Column(Integer, nullable=False)
+    deflection_gauge = Column(String, nullable=False)
     max_deflection = Column(Float, nullable=False)
     permanent_deflection = Column(Float, nullable=False)
     recovery = Column(Float, nullable=False)

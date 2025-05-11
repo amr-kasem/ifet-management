@@ -4,7 +4,7 @@ from pydantic import BaseModel
 
 
 class DeflectionCreateSchema(BaseModel):
-    deflection_gauge: int
+    deflection_gauge: str
     max_deflection: float
     permanent_deflection: float
     recovery: float
@@ -33,13 +33,13 @@ class StaticTestUpdateSchema(BaseModel):
         orm_mode = True
         
 class StaticTestResultCreateSchema(BaseModel):
-    trial_number: int
     deflections: List[DeflectionCreateSchema]
     class Config:
         orm_mode = True
         
 class StaticTestResultSchema(StaticTestResultCreateSchema):
     id: int
+    trial_number: int
     class Config:
         orm_mode = True
         

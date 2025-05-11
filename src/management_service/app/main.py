@@ -313,6 +313,7 @@ def create_static_test_trial(project_id: int, static_test_index: int, trial_data
     if not static_test:
         raise HTTPException(status_code=404, detail="Static test not found")
     
+    
     new_trial = StaticTestResult(
         static_test_id=static_test.id,
         trial_number=len(static_test.trials)+1,
@@ -418,7 +419,7 @@ def update_cyclic_tests(project_id: int, cyclic_tests_data: List[CyclicTestUpdat
         raise HTTPException(status_code=404, detail="Project not found")
     # Update cyclic tests
     for cyclic_test_data in cyclic_tests_data:
-        cyclic_test = db.query(CyclicTest).filter(CyclicTest.project_id == project_id, CyclicTest.index == cyclic_test_data.index).first()
+        cyclic_test : CyclicTest = db.query(CyclicTest).filter(CyclicTest.project_id == project_id, CyclicTest.index == cyclic_test_data.index).first()
         if cyclic_test and not cyclic_test.finished:
             cyclic_test.type = cyclic_test_data.type
             cyclic_test.cycles = cyclic_test_data.cycles
@@ -479,6 +480,11 @@ def create_cyclic_test_trial(project_id: int, cyclic_test_index: int, trial_data
     cyclic_test : CyclicTest = db.query(CyclicTest).filter(CyclicTest.index == cyclic_test_index, CyclicTest.project_id == project_id).first()
     if not cyclic_test:
         raise HTTPException(status_code=404, detail="CyclicTest not found")
+    
+    cyclic_test.resume = False
+    
+    db.commit()
+    db.refresh(cyclic_test)
     
     new_trial = CyclicTestResult(
         cyclic_test_id=cyclic_test.id,
