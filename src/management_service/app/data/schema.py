@@ -123,6 +123,7 @@ class CyclicTestResultCreateSchema(BaseModel):
         
 class CyclicTestResultSchema(CyclicTestResultCreateSchema):
     id: int
+    trial_number: int
     class Config:
         orm_mode = True
         
