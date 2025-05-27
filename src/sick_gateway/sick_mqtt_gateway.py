@@ -41,7 +41,7 @@ class SickGateway:
         self.sick_api_port = int(os.getenv("SICK_API_PORT", "3197"))
         self.mqtt_broker = os.getenv("MQTT_BROKER", "mosquitto")
         self.mqtt_port = int(os.getenv("MQTT_PORT", "1883"))
-        self.poll_interval = int(os.getenv("POLL_INTERVAL", "1"))  # seconds
+        self.poll_interval = float(os.getenv("POLL_INTERVAL", "1"))  # seconds
         self.config_file = os.getenv("CONFIG_FILE", "config.json")
         
         # Unit of measurement setting
@@ -308,7 +308,10 @@ class SickGateway:
             logger.info(f"Zero offset reset for device {device_id} upon release")
         
         logger.info(f"Device {device_id} released from testing system. Max value was: {max_value}, Latest value was: {permanent_value}")
-        
+        if not max_value:
+            max_value = 0
+        if not permanent_value:
+            permanent_value = 0 
         # Publish release status with max and latest values
         self.mqtt_client.publish(
             f"sick/sensors/{device_id}/assignment_status",
@@ -316,8 +319,8 @@ class SickGateway:
                 "assigned_to": "free",
                 "released_at": time.time(),
                 "previous_assignment": previous_assignment,
-                "max_value": max_value,
-                "permanent_value": permanent_value,
+                "max_value": "{:.2f}".format(max_value),
+                "permanent_value": "{:.2f}".format(permanent_value),
                 "zeroed": False
             })
         )
@@ -352,13 +355,13 @@ class SickGateway:
     def fetch_device_data(self, master_id: str, port_id: str) -> Optional[Dict[str, Any]]:
         """Fetch data from the SICK API simulator"""
         try:
-            url = f"http://{self.sick_api_host}:{self.sick_api_port}/iolink/v1/devices/{master_id}{port_id}/processdata/getdata/value"
+            url = f"http://{self.sick_api_host}:{self.sick_api_port}/iolink/v1/devices/master{master_id}port{port_id}/processdata/getdata/value"
             response = requests.get(url, timeout=5)
             
             if response.status_code == 200:
                 return response.json()
             else:
-                logger.error(f"Error fetching device data: {response.status_code} - {response.text}")
+                logger.error(f"Error fetching device data master{master_id}port{port_id}: {response.status_code} - {response.text}")
                 return None
         
         except requests.RequestException as e:
@@ -411,15 +414,19 @@ class SickGateway:
         assigned_to = self.assignments.get(device_id, None)
         if assigned_to == None:
             assigned_to = "free"
+        if not max_value:
+            max_value = 0
+        if not permanent_value:
+            permanent_value = 0 
         processed_data = {
             "valid": True,
             "raw_value": raw_value_converted,
-            "value": adjusted_value,
-            "permanent_value": permanent_value,  # Use the tracked permanent_value
+            "value": "{:.2f}".format(adjusted_value),
+            "permanent_value": "{:.2f}".format(permanent_value),  # Use the tracked permanent_value
             "offset": offset_converted,
             "zeroed": device_id in self.zero_offsets,
             "assigned_to": assigned_to,
-            "max_value": max_value,
+            "max_value":"{:.2f}".format(max_value),
             "units": self.unit,
             "timestamp": time.time()
         }
