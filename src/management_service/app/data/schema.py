@@ -4,7 +4,7 @@ from pydantic import BaseModel
 
 
 class DeflectionCreateSchema(BaseModel):
-    deflection_gauge: int
+    deflection_gauge: str
     max_deflection: float
     permanent_deflection: float
     recovery: float
@@ -17,9 +17,7 @@ class DeflectionSchema(DeflectionCreateSchema):
         orm_mode = True
 
 class StaticTestCreateSchema(BaseModel):
-    pressure_factor: str
     pressure: float
-    index: int
     duration: int
     type: str
     class Config:
@@ -34,16 +32,29 @@ class StaticTestUpdateSchema(BaseModel):
     class Config:
         orm_mode = True
         
-class StaticTestSchema(StaticTestCreateSchema):
-    id: int
-    deflections: List[DeflectionSchema]
-    finished: bool
+class StaticTestResultCreateSchema(BaseModel):
+    deflections: List[DeflectionCreateSchema]
     class Config:
         orm_mode = True
         
+class StaticTestResultSchema(StaticTestResultCreateSchema):
+    id: int
+    trial_number: int
+    class Config:
+        orm_mode = True
+        
+class StaticTestSchema(StaticTestCreateSchema):
+    id: int
+    finished: bool
+    index: int
+    trials: List[StaticTestResultSchema]
+    preset: bool
+    class Config:
+        orm_mode = True
+
 class InfiltrationTestCreateSchema(BaseModel):
     type: str
-    pressure: Optional[float]
+    pressure: float
 class InfiltrationTestSchema(InfiltrationTestCreateSchema):
     id: int
     duration: float
@@ -104,17 +115,26 @@ class CyclicTestUpdateStatusSchema(BaseModel):
     current_cycle: int
     class Config:
         orm_mode = True
-    
+
+class CyclicTestResultCreateSchema(BaseModel):
+    deflections: List[DeflectionCreateSchema]
+    class Config:
+        orm_mode = True
+        
+class CyclicTestResultSchema(CyclicTestResultCreateSchema):
+    id: int
+    trial_number: int
+    class Config:
+        orm_mode = True
+        
 class CyclicTestSchema(CyclicTestCreateSchema):
     # id: int
     finished: bool
     index: int
-    deflection: Optional[float]
-    permanent_set: Optional[float]
-    result: Optional[bool]
-    note: Optional[str]
     resume: bool
     current_cycle: int
+    trials: List[CyclicTestResultSchema]
+    preset: bool
     class Config:
         orm_mode = True
 

@@ -411,8 +411,8 @@ class SickGateway:
         offset_converted = self.convert_units(offset)
         max_value = None if self.max_values.get(device_id) is None else self.convert_units(self.max_values.get(device_id))
         permanent_value = None if self.latest_values.get(device_id) is None else self.convert_units(self.latest_values.get(device_id))
-        assigned_to = self.assignments.get(device_id, None)
-        if assigned_to == None:
+        assigned_to :str = self.assignments.get(device_id, '')
+        if assigned_to is None or len(assigned_to) == 0:
             assigned_to = "free"
         if not max_value:
             max_value = 0

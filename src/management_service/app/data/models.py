@@ -38,22 +38,22 @@ class StaticTest(Base):
     pressure = Column(Float, nullable=False)
     duration = Column(Integer, nullable=False)
     type = Column(String, nullable=False)
+    preset = Column(Boolean, nullable=False, default=False)
     project_id = Column(Integer, ForeignKey('projects.id'))
     project = relationship("Project", back_populates="static_tests")
-
-    deflections = relationship("Deflection", back_populates="static_test", cascade="all, delete-orphan")
+    trials = relationship("StaticTestResult", back_populates="static_test", cascade="all, delete-orphan")
 
 class Deflection(Base):
     __tablename__ = "deflections"
 
     id = Column(Integer, primary_key=True, index=True)
-    deflection_gauge = Column(Integer, nullable=False)
+    deflection_gauge = Column(String, nullable=False)
     max_deflection = Column(Float, nullable=False)
     permanent_deflection = Column(Float, nullable=False)
     recovery = Column(Float, nullable=False)
 
-    static_test_id = Column(Integer, ForeignKey('static_tests.id'))
-    static_test = relationship("StaticTest", back_populates="deflections")
+    test_id = Column(Integer, ForeignKey('test_results.id'))
+    test = relationship("TestResult", back_populates="deflections")
 
 class InfiltrationTest(Base):
     __tablename__ = "infiltration_tests"
@@ -100,12 +100,32 @@ class CyclicTest(Base):
     cycles = Column(Integer, nullable=False)
     low_pressure = Column(Float, nullable=False)
     high_pressure = Column(Float, nullable=False)
-    deflection = Column(Float, nullable=True)
-    permanent_set = Column(Float, nullable=True)
-    result = Column(Boolean, nullable=True)
-    note = Column(String, nullable=True)
     resume = Column(Boolean, nullable=False)
     current_cycle = Column(Integer, nullable=False)
+    preset = Column(Boolean, nullable=False, default=False)
 
     project_id = Column(Integer, ForeignKey('projects.id'))
     project = relationship("Project", back_populates="cyclic_tests")
+    
+    trials = relationship("CyclicTestResult", back_populates="cyclic_test", cascade="all, delete-orphan")
+
+class TestResult(Base):
+    __tablename__ = "test_results"
+
+    id = Column(Integer, primary_key=True, index=True)
+    trial_number = Column(Integer, nullable=False)
+    result = Column(Boolean, nullable=True)
+    note = Column(String, nullable=True)
+    deflections = relationship("Deflection", back_populates="test", cascade="all, delete-orphan")
+
+class CyclicTestResult(TestResult):
+    __tablename__ = "cyclic_test_results"
+    id = Column(Integer, ForeignKey('test_results.id'), primary_key=True, index=True)
+    cyclic_test_id = Column(Integer, ForeignKey('cyclic_tests.id'))
+    cyclic_test = relationship("CyclicTest", back_populates="trials")
+
+class StaticTestResult(TestResult):
+    __tablename__ = "static_test_results"
+    id = Column(Integer, ForeignKey('test_results.id'), primary_key=True, index=True)
+    static_test_id = Column(Integer, ForeignKey('static_tests.id'))
+    static_test = relationship("StaticTest", back_populates="trials")
