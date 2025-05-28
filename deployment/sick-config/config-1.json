@@ -47,54 +47,6 @@
       "master_id": "1",
       "port_id": "8",
       "description": "Position sensor 18"
-    },
-    {
-      "id": "2-1",
-      "master_id": "2",
-      "port_id": "1",
-      "description": "Position sensor 21"
-    },
-    {
-      "id": "2-2",
-      "master_id": "2",
-      "port_id": "2",
-      "description": "Position sensor 22"
-    },
-    {
-      "id": "2-3",
-      "master_id": "2",
-      "port_id": "3",
-      "description": "Position sensor 23"
-    },
-    {
-      "id": "2-4",
-      "master_id": "2",
-      "port_id": "4",
-      "description": "Position sensor 24"
-    },
-    {
-      "id": "2-5",
-      "master_id": "2",
-      "port_id": "5",
-      "description": "Position sensor 25"
-    },
-    {
-      "id": "2-6",
-      "master_id": "2",
-      "port_id": "6",
-      "description": "Position sensor 26"
-    },
-    {
-      "id": "2-7",
-      "master_id": "2",
-      "port_id": "7",
-      "description": "Position sensor 27"
-    },
-    {
-      "id": "2-8",
-      "master_id": "2",
-      "port_id": "8",
-      "description": "Position sensor 28"
     }
   ],
   "mqtt": {
