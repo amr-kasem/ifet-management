@@ -9,19 +9,19 @@ class DeflectionCreateSchema(BaseModel):
     permanent_deflection: float
     recovery: float
     class Config:
-        orm_mode = True
+        from_attributes = True
         
 class DeflectionSchema(DeflectionCreateSchema):
     id: int
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class StaticTestCreateSchema(BaseModel):
     pressure: float
     duration: int
     type: str
     class Config:
-        orm_mode = True
+        from_attributes = True
         
 class StaticTestUpdateSchema(BaseModel):
     # id: int
@@ -30,18 +30,20 @@ class StaticTestUpdateSchema(BaseModel):
     duration: int
     pressure: float
     class Config:
-        orm_mode = True
+        from_attributes = True
         
 class StaticTestResultCreateSchema(BaseModel):
     deflections: List[DeflectionCreateSchema]
     class Config:
-        orm_mode = True
+        from_attributes = True
         
 class StaticTestResultSchema(StaticTestResultCreateSchema):
     id: int
     trial_number: int
+    image_path: Optional[str] = None
+    note: Optional[str] = None
     class Config:
-        orm_mode = True
+        from_attributes = True
         
 class StaticTestSchema(StaticTestCreateSchema):
     id: int
@@ -50,7 +52,7 @@ class StaticTestSchema(StaticTestCreateSchema):
     trials: List[StaticTestResultSchema]
     preset: bool
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class InfiltrationTestCreateSchema(BaseModel):
     type: str
@@ -61,7 +63,7 @@ class InfiltrationTestSchema(InfiltrationTestCreateSchema):
     leakage: float
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class ShotCreateSchema(BaseModel):
     area: float
@@ -69,26 +71,26 @@ class ShotCreateSchema(BaseModel):
     result: bool
     note: str
     class Config:
-        orm_mode = True
+        from_attributes = True
     
 class ShotSchema(ShotCreateSchema):
     id: int
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class MissileImpactTestCreateSchema(BaseModel):
     missile: str
     missile_weight: float
     class Config:
-        orm_mode = True
+        from_attributes = True
         
 class MissileImpactTestSchema(MissileImpactTestCreateSchema):
     id: int
     shots: List[ShotSchema]
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 
@@ -98,7 +100,7 @@ class CyclicTestCreateSchema(BaseModel):
     low_pressure: float
     high_pressure: float
     class Config:
-        orm_mode = True
+        from_attributes = True
     
 class CyclicTestUpdateSchema(BaseModel):
     # id: int
@@ -108,24 +110,26 @@ class CyclicTestUpdateSchema(BaseModel):
     low_pressure: float
     high_pressure: float
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class CyclicTestUpdateStatusSchema(BaseModel):
 
     current_cycle: int
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class CyclicTestResultCreateSchema(BaseModel):
     deflections: List[DeflectionCreateSchema]
     class Config:
-        orm_mode = True
+        from_attributes = True
         
 class CyclicTestResultSchema(CyclicTestResultCreateSchema):
     id: int
     trial_number: int
+    image_path: Optional[str] = None
+    note: Optional[str] = None
     class Config:
-        orm_mode = True
+        from_attributes = True
         
 class CyclicTestSchema(CyclicTestCreateSchema):
     # id: int
@@ -136,14 +140,28 @@ class CyclicTestSchema(CyclicTestCreateSchema):
     trials: List[CyclicTestResultSchema]
     preset: bool
     class Config:
-        orm_mode = True
+        from_attributes = True
+
+class TestResultUpdateSchema(BaseModel):
+    note: Optional[str] = None
+    class Config:
+        from_attributes = True
+
+class TestResultResponseSchema(BaseModel):
+    id: int
+    trial_number: int
+    note: Optional[str] = None
+    image_path: Optional[str] = None
+    result: Optional[bool] = None
+    class Config:
+        from_attributes = True
 
 class ProjectCreateSchema(BaseModel):
     name: str
     inward_design_pressure: float
     outward_design_pressure: float
     class Config:
-        orm_mode = True
+        from_attributes = True
        
 class ProjectSchema(ProjectCreateSchema):
     id: int
@@ -154,7 +172,7 @@ class ProjectSchema(ProjectCreateSchema):
     cyclic_tests: List[CyclicTestSchema]
 
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class DeviceCreateSchema(BaseModel):
@@ -169,7 +187,7 @@ class DeviceSchema(DeviceCreateSchema):
     turbo_charger: Optional[int]
 
     class Config:
-        orm_mode = True
+        from_attributes = True
         
 class DeviceMiniSchema(DeviceCreateSchema):
     id: int
@@ -177,15 +195,15 @@ class DeviceMiniSchema(DeviceCreateSchema):
     turbo_slave: Boolean
     turbo_charger: Optional[int]
     class Config:
-        orm_mode = True
+        from_attributes = True
         
 class DeviceTurboMaster(BaseModel):
     slave_id: int
     turbo_mode: bool
     class Config:
-        orm_mode = True
+        from_attributes = True
     
 class DeviceTurboSlave(BaseModel):
     slave_mode: bool
     class Config:
-        orm_mode = True
+        from_attributes = True

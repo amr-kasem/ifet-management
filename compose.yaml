@@ -60,6 +60,9 @@ services:
       - '8000:8000'
     depends_on:
       - db
+    volumes:
+      - ./src/management_service/alembic/versions:/app/alembic/versions
+      - ./uploads:/app/uploads
     restart: always
 
     logging:

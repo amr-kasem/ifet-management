@@ -1,23 +1,37 @@
 import os
 from sqlalchemy import create_engine
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import sessionmaker, Session
 from app.data.models import *
 from app.data.schema import *
-from app.data.utils import run_migrations
 from app.domain.cyclic_test_pressure_calculator import CyclicTestPressureCalculator
 from app.domain.static_test_pressure_calculator import StaticTestPressureCalculator
+import logging
+import uuid
+import shutil
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
 
 from fastapi.middleware.cors import CORSMiddleware
 
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost/dbname")
 
 engine = create_engine(DATABASE_URL)
-run_migrations(engine)
+# Migrations are handled by startup script
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 app = FastAPI()
+
+# Create uploads directory if it doesn't exist
+uploads_dir = Path("uploads")
+uploads_dir.mkdir(exist_ok=True)
+
+# Mount static files for uploaded images
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # Dependency to get the session
 def get_db():
@@ -660,3 +674,67 @@ def set_turbo_slave(slave_id: int,command: DeviceTurboSlave, db: Session = Depen
     db.refresh(db_slave)
     db.refresh(db_slave)
     return db_slave
+
+
+@app.get("/test-results/{test_result_id}", response_model=TestResultResponseSchema)
+def get_test_result(test_result_id: int, db: Session = Depends(get_db)):
+    """
+    Get a test result by ID.
+    """
+    test_result = db.query(TestResult).filter(TestResult.id == test_result_id).first()
+    if not test_result:
+        raise HTTPException(status_code=404, detail="Test result not found")
+    
+    return test_result
+
+
+@app.put("/test-results/{test_result_id}", response_model=TestResultResponseSchema)
+async def update_test_result(
+    test_result_id: int,
+    note: str = Form(None),
+    image: UploadFile = File(None),
+    db: Session = Depends(get_db)
+):
+    """
+    Update a test result with note and/or image.
+    The image will be saved to a local directory and the path will be stored in the database.
+    """
+    # Find the test result
+    test_result = db.query(TestResult).filter(TestResult.id == test_result_id).first()
+    if not test_result:
+        raise HTTPException(status_code=404, detail="Test result not found")
+    
+    # Create uploads directory if it doesn't exist
+    upload_dir = Path("uploads")
+    upload_dir.mkdir(exist_ok=True)
+    
+    # Handle image upload
+    image_path = None
+    if image:
+        # Generate unique filename
+        file_extension = Path(image.filename).suffix if image.filename else ".jpg"
+        unique_filename = f"{uuid.uuid4()}{file_extension}"
+        file_path = upload_dir / unique_filename
+        
+        # Save the file
+        try:
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(image.file, buffer)
+            image_path = str(file_path)
+        except Exception as e:
+            logger.error(f"Error saving image: {e}")
+            raise HTTPException(status_code=500, detail="Error saving image")
+    
+    # Update the test result
+    if note is not None:
+        test_result.note = note
+    if image_path:
+        test_result.image_path = image_path
+    
+    db.commit()
+    db.refresh(test_result)
+    
+    return test_result
+
+
+
