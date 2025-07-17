@@ -116,6 +116,7 @@ class TestResult(Base):
     trial_number = Column(Integer, nullable=False)
     result = Column(Boolean, nullable=True)
     note = Column(String, nullable=True)
+    image_path = Column(String, nullable=True)
     deflections = relationship("Deflection", back_populates="test", cascade="all, delete-orphan")
 
 class CyclicTestResult(TestResult):

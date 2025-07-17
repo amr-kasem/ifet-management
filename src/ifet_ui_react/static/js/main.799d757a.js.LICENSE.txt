@@ -4,6 +4,20 @@
   (*! ieee754. BSD-3-Clause License. Feross Aboukhadijeh <https://feross.org/opensource> *)
 */
 
+/*! exports provided: default */
+
+/*! no static exports found */
+
+/*! react */
+
+/*!******************************!*\
+      !*** ./src/react-webcam.tsx ***!
+      \******************************/
+
+/*!**************************************************************************************!*\
+      !*** external {"root":"React","commonjs2":"react","commonjs":"react","amd":"react"} ***!
+      \**************************************************************************************/
+
 /**
  * @license React
  * react-dom.production.min.js
@@ -70,17 +84,6 @@
  *
  * @copyright Oleg Isonen (Slobodskoi) / Isonen 2014-present
  * @website https://github.com/cssinjs/jss
- * @license MIT
- */
-
-/**
- * React Router DOM v6.26.1
- *
- * Copyright (c) Remix Software Inc.
- *
- * This source code is licensed under the MIT license found in the
- * LICENSE.md file in the root directory of this source tree.
- *
  * @license MIT
  */
 
