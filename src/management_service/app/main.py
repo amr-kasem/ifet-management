@@ -822,10 +822,10 @@ async def download_specimen_report(project_id: int, db: Session = Depends(get_db
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
         pdf_path = create_project_pdf(db_project, temp_file.name)
     
-    # Return the PDF as a file response
+    # Return the PDF as a file response with inline disposition
     return FileResponse(
         path=pdf_path,
         filename=f"project_{project_id}_report.pdf",
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename=project_{project_id}_report.pdf"}
+        headers={"Content-Disposition": f"inline; filename=project_{project_id}_report.pdf"}
     )
