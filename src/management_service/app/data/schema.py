@@ -156,10 +156,21 @@ class TestResultResponseSchema(BaseModel):
     class Config:
         from_attributes = True
 
+class ProjectParentCreateSchema(BaseModel):
+    name: str
+    class Config:
+        from_attributes = True
+
+class ProjectParentSchema(ProjectParentCreateSchema):   
+    id: int
+    class Config:
+        from_attributes = True
+
 class ProjectCreateSchema(BaseModel):
     name: str
     inward_design_pressure: float
     outward_design_pressure: float
+    parent_id: Optional[int] = None
     class Config:
         from_attributes = True
        
