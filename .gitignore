@@ -4,6 +4,11 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Alembic database migrations - ignore all version files and database files
+**/alembic/versions/*
+**/alembic/*.db
+**/alembic/*.sqlite
+**/alembic/*.sqlite3
 # C extensions
 *.so
 
