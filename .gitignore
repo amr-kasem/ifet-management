@@ -1,6 +1,6 @@
 **/logs
 
-alembic/versions/*
+**/alembic/versions/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
