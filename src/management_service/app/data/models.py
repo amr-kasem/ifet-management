@@ -15,11 +15,17 @@ class Device(Base):
     
     projects = relationship("Project", back_populates="device", cascade="all, delete-orphan")
 
+class ProjectParent(Base):
+    __tablename__ = "project_parents"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    
 class Project(Base):
     __tablename__ = "projects"
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
+    parent_id = Column(Integer, ForeignKey('project_parents.id'), nullable=True)
     device_id = Column(Integer, ForeignKey('devices.id'), nullable=False)
     inward_design_pressure = Column(Float, nullable=False)
     outward_design_pressure = Column(Float, nullable=False)

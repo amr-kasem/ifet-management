@@ -1,6 +1,8 @@
 import os
+from typing import Optional
 from sqlalchemy import create_engine
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import sessionmaker, Session
 from app.data.models import *
 from app.data.schema import *
@@ -11,8 +13,11 @@ import uuid
 import shutil
 from pathlib import Path
 from fastapi.staticfiles import StaticFiles
+import tempfile
 
 from fastapi.middleware.cors import CORSMiddleware
+
+from app.utils.pdf_utils import create_test_report_pdf
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -89,9 +94,14 @@ def update_device(device: DeviceSchema, db: Session = Depends(get_db)):
     return db_device
 
 @app.get("/devices/{device_id}/projects/", response_model=List[ProjectSchema])
-def get_projects_by_device_id(device_id: int, db: Session = Depends(get_db)):
+def get_projects_by_device_id(device_id: int, parent_id: Optional[int] = None, db: Session = Depends(get_db)):
     device = db.query(Device).filter(Device.id == device_id).first()
-    projects = db.query(Project).filter(Project.device == device).all()
+    query = db.query(Project).filter(Project.device == device)
+    
+    if parent_id is not None:
+        query = query.filter(Project.parent_id == parent_id)
+    
+    projects = query.all()
     if not projects:
         raise HTTPException(status_code=404, detail="No projects found for this device_id")
     return projects
@@ -112,6 +122,7 @@ def create_project_for_device(device_id: int, project: ProjectCreateSchema, db: 
         inward_design_pressure=project.inward_design_pressure,
         outward_design_pressure=project.outward_design_pressure,
         device_id=device_id,
+        parent_id=project.parent_id,
         static_tests=[],
         infiltration_tests=[],
         missile_impact_tests=[],
@@ -738,3 +749,41 @@ async def update_test_result(
 
 
 
+
+@app.get("/project-parents", response_model=List[ProjectParentSchema])
+def get_project_parents(db: Session = Depends(get_db)):
+    return db.query(ProjectParent).all()
+
+@app.post("/project-parents", response_model=ProjectParentSchema)
+def create_project_parent(project_parent: ProjectParentCreateSchema, db: Session = Depends(get_db)):
+    db_project_parent = ProjectParent(name=project_parent.name)
+    db.add(db_project_parent)
+    db.commit()
+    db.refresh(db_project_parent)
+    return db_project_parent
+
+
+
+
+
+
+@app.get("/projects/{project_id}/report")
+async def download_specimen_report(project_id: int, db: Session = Depends(get_db)):
+    """
+    Download specimen report for a specific project
+    """
+    db_project = db.query(Project).filter(Project.id == project_id).first()
+    if not db_project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    # Create temporary file for the PDF
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+        pdf_path = create_test_report_pdf(db_project, temp_file.name)
+    
+    # Return the PDF as a file response with inline disposition
+    return FileResponse(
+        path=pdf_path,
+        filename=f"project_{project_id}_report.pdf",
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename=project_{project_id}_report.pdf"}
+    )
