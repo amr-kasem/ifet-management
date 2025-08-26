@@ -6,6 +6,8 @@
 **/alembic/*.sqlite
 **/alembic/*.sqlite3
 
+**/uploads/*
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
