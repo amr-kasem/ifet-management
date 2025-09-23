@@ -50,7 +50,6 @@ def get_db():
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Frontend origin
-    allow_credentials=True,
     allow_methods=["GET","POST","PUT", "DELETE"],  # Allow all HTTP methods (POST, GET, etc.)
     allow_headers=["*"],  # Allow all headers
 )

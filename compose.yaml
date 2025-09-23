@@ -9,6 +9,11 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 
   pgadmin:
@@ -23,6 +28,11 @@ services:
     volumes:
       - pgadmin_data:/var/lib/pgadmin
     restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   mosquitto:
     image: eclipse-mosquitto:latest
@@ -32,6 +42,12 @@ services:
     volumes:
       - ./deployment/config/mosquitto.conf:/mosquitto/config/mosquitto.conf
     restart: always
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 
 
   report-api:
@@ -48,6 +64,12 @@ services:
       - ./src/management_service/alembic/versions:/app/alembic/versions
       - ./uploads:/app/uploads
     restart: always
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 
   sick_gateway-1:
@@ -72,6 +94,12 @@ services:
       # - ./deployment/sick-config/.env:/app/.env
     restart: always
 
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   sick_gateway-2:
     build:
       context: ./src/sick_gateway
@@ -94,6 +122,12 @@ services:
       # - ./deployment/sick-config/.env:/app/.env
     restart: always
 
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   ui:
     image: httpd:2.4
     volumes:
@@ -103,6 +137,12 @@ services:
     ports:
       - '80:80'
     restart: always
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   # production_service:
   #   image: httpd:latest
