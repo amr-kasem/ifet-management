@@ -1,6 +1,7 @@
 import os
 from typing import Optional
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import sessionmaker, Session
@@ -117,40 +118,48 @@ def create_project_for_device(device_id: int, project: ProjectCreateSchema, db: 
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
 
-    db_project = Project(
-        name=project.name,
-        inward_design_pressure=project.inward_design_pressure,
-        outward_design_pressure=project.outward_design_pressure,
-        device_id=device_id,
-        parent_id=project.parent_id,
-        static_tests=[],
-        infiltration_tests=[],
-        missile_impact_tests=[],
-        cyclic_tests=[],
-    )
-    db.add(db_project)
-    db.commit()
-    db.refresh(db_project)
+    try:
+        db_project = Project(
+            name=project.name,
+            inward_design_pressure=project.inward_design_pressure,
+            outward_design_pressure=project.outward_design_pressure,
+            device_id=device_id,
+            parent_id=project.parent_id,
+            static_tests=[],
+            infiltration_tests=[],
+            missile_impact_tests=[],
+            cyclic_tests=[],
+        )
+        db.add(db_project)
+        db.commit()
+        db.refresh(db_project)
 
-    # Create 8 cyclic tests
-    for i in range(8):
-        h, l, c = CyclicTestPressureCalculator.get_cylcic_test_data(
-            db_project.inward_design_pressure if i < 4 else db_project.outward_design_pressure,
-            i,
-        )
-        cyclic_test = CyclicTest(
-            type="inward" if i < 4 else "outward",
-            cycles=c,
-            low_pressure=l,
-            high_pressure=h,
-            index=i,
-            project_id=db_project.id,
-            finished=False,
-            resume=False,
-            current_cycle=0,
-            preset=True,
-        )
-        db.add(cyclic_test)
+        # Create 8 cyclic tests
+        for i in range(8):
+            h, l, c = CyclicTestPressureCalculator.get_cylcic_test_data(
+                db_project.inward_design_pressure if i < 4 else db_project.outward_design_pressure,
+                i,
+            )
+            cyclic_test = CyclicTest(
+                type="inward" if i < 4 else "outward",
+                cycles=c,
+                low_pressure=l,
+                high_pressure=h,
+                index=i,
+                project_id=db_project.id,
+                finished=False,
+                resume=False,
+                current_cycle=0,
+                preset=True,
+            )
+            db.add(cyclic_test)
+    except IntegrityError as e:
+        db.rollback()
+        if "UNIQUE constraint failed" in str(e) or "duplicate key value" in str(e):
+            raise HTTPException(status_code=400, detail=f"Project with name '{project.name}' already exists")
+        else:
+            raise HTTPException(status_code=400, detail="Database constraint violation")
+
     
     # Create 6 static tests
     for j in range(6):
@@ -769,11 +778,18 @@ def get_project_parents(db: Session = Depends(get_db)):
 
 @app.post("/project-parents", response_model=ProjectParentSchema)
 def create_project_parent(project_parent: ProjectParentCreateSchema, db: Session = Depends(get_db)):
-    db_project_parent = ProjectParent(name=project_parent.name)
-    db.add(db_project_parent)
-    db.commit()
-    db.refresh(db_project_parent)
-    return db_project_parent
+    try:
+        db_project_parent = ProjectParent(name=project_parent.name)
+        db.add(db_project_parent)
+        db.commit()
+        db.refresh(db_project_parent)
+        return db_project_parent
+    except IntegrityError as e:
+        db.rollback()
+        if "UNIQUE constraint failed" in str(e) or "duplicate key value" in str(e):
+            raise HTTPException(status_code=400, detail=f"Project parent with name '{project_parent.name}' already exists")
+        else:
+            raise HTTPException(status_code=400, detail="Database constraint violation")
 
 
 
