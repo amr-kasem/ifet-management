@@ -154,18 +154,31 @@ def create_project_for_device(device_id: int, project: ProjectCreateSchema, db: 
     
     # Create 6 static tests
     for j in range(6):
-        p, d = StaticTestPressureCalculator.get_static_test_data(db_project.inward_design_pressure if j < 3 else db_project.outward_design_pressure, j)
+        p, d = StaticTestPressureCalculator.get_static_test_data(db_project.outward_design_pressure if j % 2 else db_project.inward_design_pressure, j)
         static_test = StaticTest(
             pressure_factor='Structural Pressure',
             pressure=p,
             duration=d,
-            type="inward" if j < 3 else "outward",
-            index=j,
+            type="outward" if j % 2 else "inward",
+            index=j + (1 if project.has_water_infiltration and j > 3 else 0),
             project_id=db_project.id,
             finished=False,
             preset=True,
         )
         db.add(static_test)
+
+    if project.has_water_infiltration:
+        water_infiltration_test = StaticTest(
+            pressure_factor='Structural Pressure',
+            pressure=db_project.inward_design_pressure * 0.15,
+            duration=900,
+            type="inward",
+            index=4,
+            project_id=db_project.id,
+            finished=False,
+            preset=True,
+        )
+        db.add(water_infiltration_test)
     
     db.commit()
     db.refresh(db_project)
@@ -186,7 +199,7 @@ def update_project(project_id: int, project_data: ProjectCreateSchema, db: Sessi
     # Recalculate static tests
     for j in range(6):
         p, d = StaticTestPressureCalculator.get_static_test_data(
-            db_project.inward_design_pressure if j < 3 else db_project.outward_design_pressure, j
+            db_project.outward_design_pressure if j % 2 else db_project.inward_design_pressure, j
         )
         static_test = db.query(StaticTest).filter(StaticTest.project_id == project_id, StaticTest.index == j, StaticTest.preset == True).first()
         if static_test and not static_test.finished:
@@ -197,7 +210,7 @@ def update_project(project_id: int, project_data: ProjectCreateSchema, db: Sessi
                 pressure_factor='Structural Pressure',
                 pressure=p,
                 duration=d,
-                type="inward" if j < 3 else "outward",
+                type="outward" if j % 2 else "inward",
                 index=j,
                 project_id=project_id,
                 finished=False,

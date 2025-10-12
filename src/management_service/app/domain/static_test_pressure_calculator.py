@@ -1,10 +1,10 @@
 
 class StaticTestPressureCalculator:
-    STATIC_PRESSURE_FACTOR = [0.75, 1, 1.5]
+    STATIC_PRESSURE_FACTOR = [0.75, 0.75, 1, 1, 1.5, 1.5]
     
     @staticmethod
     def _get_pressure(design_load, index):
-        factor = StaticTestPressureCalculator.STATIC_PRESSURE_FACTOR[abs(index - 3) - 1]
+        factor = StaticTestPressureCalculator.STATIC_PRESSURE_FACTOR[index]
         return  design_load * factor 
     
     @staticmethod

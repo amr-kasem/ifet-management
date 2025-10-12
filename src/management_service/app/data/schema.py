@@ -171,6 +171,7 @@ class ProjectCreateSchema(BaseModel):
     inward_design_pressure: float
     outward_design_pressure: float
     parent_id: Optional[int] = None
+    has_water_infiltration: bool = False
     class Config:
         from_attributes = True
        
