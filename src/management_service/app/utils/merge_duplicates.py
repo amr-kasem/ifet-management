@@ -257,39 +257,189 @@ def interactive_merge_project_parents():
         db.close()
 
 
+def merge_projects_by_ids():
+    """Merge specific projects by manually provided IDs."""
+    db = SessionLocal()
+    try:
+        print("\n" + "="*80)
+        print("MERGE PROJECTS BY MANUAL ID SELECTION")
+        print("="*80)
+        
+        ids_input = input("\nEnter project IDs separated by commas (e.g., 45, 46, 43): ")
+        try:
+            project_ids = [int(x.strip()) for x in ids_input.split(',')]
+        except ValueError:
+            print("Invalid input. Please enter valid integer IDs separated by commas.")
+            return
+        
+        if len(project_ids) < 2:
+            print("Please provide at least 2 project IDs to merge.")
+            return
+        
+        # Fetch the projects
+        projects = db.query(Project).filter(Project.id.in_(project_ids)).all()
+        
+        if len(projects) != len(project_ids):
+            found_ids = [p.id for p in projects]
+            missing_ids = [pid for pid in project_ids if pid not in found_ids]
+            print(f"\nWarning: Some IDs were not found in database: {missing_ids}")
+            if not projects:
+                print("No valid projects found.")
+                return
+        
+        # Display the projects
+        print(f"\nFound {len(projects)} project(s):")
+        print("-" * 80)
+        
+        for project in projects:
+            refs = get_project_references_count(db, project.id)
+            print(f"ID: {project.id}")
+            print(f"  Name: {project.name}")
+            print(f"  Device ID: {project.device_id}")
+            print(f"  Parent ID: {project.parent_id}")
+            print(f"  Inward Pressure: {project.inward_design_pressure}")
+            print(f"  Outward Pressure: {project.outward_design_pressure}")
+            print(f"  References: {refs['total']} total "
+                  f"(Static: {refs['static_tests']}, "
+                  f"Infiltration: {refs['infiltration_tests']}, "
+                  f"Missile: {refs['missile_impact_tests']}, "
+                  f"Cyclic: {refs['cyclic_tests']})")
+            print()
+        
+        # Ask which to keep
+        available_ids = [p.id for p in projects]
+        while True:
+            try:
+                keep_id = int(input(f"Enter the ID to KEEP from {available_ids} (others will be deleted): "))
+                if keep_id in available_ids:
+                    break
+                else:
+                    print(f"Invalid ID. Please choose from: {available_ids}")
+            except ValueError:
+                print("Please enter a valid integer ID.")
+        
+        duplicate_ids = [pid for pid in available_ids if pid != keep_id]
+        
+        confirm = input(f"\nConfirm: Keep project ID {keep_id} and delete IDs {duplicate_ids}? (yes/no): ")
+        if confirm.lower() == 'yes':
+            success = merge_projects(db, keep_id, duplicate_ids)
+            if success:
+                print(f"✓ Successfully merged projects. Kept ID {keep_id}, deleted {duplicate_ids}")
+            else:
+                print(f"✗ Failed to merge projects.")
+        else:
+            print("Operation cancelled.")
+    finally:
+        db.close()
+
+
+def merge_project_parents_by_ids():
+    """Merge specific project parents by manually provided IDs."""
+    db = SessionLocal()
+    try:
+        print("\n" + "="*80)
+        print("MERGE PROJECT PARENTS BY MANUAL ID SELECTION")
+        print("="*80)
+        
+        ids_input = input("\nEnter project parent IDs separated by commas (e.g., 5, 6, 7): ")
+        try:
+            parent_ids = [int(x.strip()) for x in ids_input.split(',')]
+        except ValueError:
+            print("Invalid input. Please enter valid integer IDs separated by commas.")
+            return
+        
+        if len(parent_ids) < 2:
+            print("Please provide at least 2 project parent IDs to merge.")
+            return
+        
+        # Fetch the project parents
+        parents = db.query(ProjectParent).filter(ProjectParent.id.in_(parent_ids)).all()
+        
+        if len(parents) != len(parent_ids):
+            found_ids = [p.id for p in parents]
+            missing_ids = [pid for pid in parent_ids if pid not in found_ids]
+            print(f"\nWarning: Some IDs were not found in database: {missing_ids}")
+            if not parents:
+                print("No valid project parents found.")
+                return
+        
+        # Display the project parents
+        print(f"\nFound {len(parents)} project parent(s):")
+        print("-" * 80)
+        
+        for parent in parents:
+            refs_count = get_project_parent_references_count(db, parent.id)
+            print(f"ID: {parent.id}")
+            print(f"  Name: {parent.name}")
+            print(f"  Referenced by {refs_count} project(s)")
+            print()
+        
+        # Ask which to keep
+        available_ids = [p.id for p in parents]
+        while True:
+            try:
+                keep_id = int(input(f"Enter the ID to KEEP from {available_ids} (others will be deleted): "))
+                if keep_id in available_ids:
+                    break
+                else:
+                    print(f"Invalid ID. Please choose from: {available_ids}")
+            except ValueError:
+                print("Please enter a valid integer ID.")
+        
+        duplicate_ids = [pid for pid in available_ids if pid != keep_id]
+        
+        confirm = input(f"\nConfirm: Keep project parent ID {keep_id} and delete IDs {duplicate_ids}? (yes/no): ")
+        if confirm.lower() == 'yes':
+            success = merge_project_parents(db, keep_id, duplicate_ids)
+            if success:
+                print(f"✓ Successfully merged project parents. Kept ID {keep_id}, deleted {duplicate_ids}")
+            else:
+                print(f"✗ Failed to merge project parents.")
+        else:
+            print("Operation cancelled.")
+    finally:
+        db.close()
+
+
 def main():
     """Main menu for duplicate management."""
     while True:
         print("\n" + "="*80)
         print("DUPLICATE MANAGEMENT TOOL")
         print("="*80)
-        print("1. Analyze and merge duplicate projects")
-        print("2. Analyze and merge duplicate project parents")
-        print("3. View duplicate projects (analysis only)")
-        print("4. View duplicate project parents (analysis only)")
-        print("5. Exit")
+        print("1. Analyze and merge duplicate projects (by name)")
+        print("2. Analyze and merge duplicate project parents (by name)")
+        print("3. Merge projects by manual ID selection")
+        print("4. Merge project parents by manual ID selection")
+        print("5. View duplicate projects (analysis only)")
+        print("6. View duplicate project parents (analysis only)")
+        print("7. Exit")
         
-        choice = input("\nEnter your choice (1-5): ")
+        choice = input("\nEnter your choice (1-7): ")
         
         if choice == '1':
             interactive_merge_projects()
         elif choice == '2':
             interactive_merge_project_parents()
         elif choice == '3':
+            merge_projects_by_ids()
+        elif choice == '4':
+            merge_project_parents_by_ids()
+        elif choice == '5':
             db = SessionLocal()
             try:
                 duplicates = find_duplicate_projects(db)
                 display_duplicate_projects(duplicates)
             finally:
                 db.close()
-        elif choice == '4':
+        elif choice == '6':
             db = SessionLocal()
             try:
                 duplicates = find_duplicate_project_parents(db)
                 display_duplicate_project_parents(duplicates)
             finally:
                 db.close()
-        elif choice == '5':
+        elif choice == '7':
             print("Exiting...")
             break
         else:
