@@ -18,13 +18,13 @@ class Device(Base):
 class ProjectParent(Base):
     __tablename__ = "project_parents"
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False)
+    name = Column(String, nullable=False, unique=True)
     
 class Project(Base):
     __tablename__ = "projects"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, nullable=False)
+    name = Column(String, nullable=False, unique=True)
     parent_id = Column(Integer, ForeignKey('project_parents.id'), nullable=True)
     device_id = Column(Integer, ForeignKey('devices.id'), nullable=False)
     inward_design_pressure = Column(Float, nullable=False)
