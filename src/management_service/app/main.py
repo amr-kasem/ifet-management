@@ -118,7 +118,19 @@ def create_project_for_device(device_id: int, project: ProjectCreateSchema, db: 
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
 
+    duplicate = db.query(Project).filter(Project.name == project.name, Project.parent_id == project.parent_id).first()
+    if duplicate:
+        duplicate_data = {
+            "id": duplicate.id,
+            "name": duplicate.name,
+            "parent_id": duplicate.parent_id,
+            "device_id": duplicate.device_id
+        }
+        logger.error(f"Error - Duplicate specimen found: {duplicate.parent_id, duplicate.name} for Project: {project.parent_id, project.name}")
+        raise HTTPException(status_code=400, detail="Specimen with this name already exists for this Project")
+
     try:
+
         db_project = Project(
             name=project.name,
             inward_design_pressure=project.inward_design_pressure,
@@ -156,7 +168,7 @@ def create_project_for_device(device_id: int, project: ProjectCreateSchema, db: 
     except IntegrityError as e:
         db.rollback()
         if "UNIQUE constraint failed" in str(e) or "duplicate key value" in str(e):
-            raise HTTPException(status_code=400, detail=f"Project with name '{project.name}' already exists")
+            raise HTTPException(status_code=400, detail=f"Unique Contstraint Failed: Specimen with name '{project.name}' already exists")
         else:
             raise HTTPException(status_code=400, detail="Database constraint violation")
 
@@ -200,7 +212,9 @@ def update_project(project_id: int, project_data: ProjectCreateSchema, db: Sessi
     db_project = db.query(Project).filter(Project.id == project_id).first()
     if not db_project:
         raise HTTPException(status_code=404, detail="Project not found")
-
+    duplicate = db.query(Project).filter(Project.name == project_data.name and Project.parent_id == db_project.parent_id).first()
+    if duplicate:
+        raise HTTPException(status_code=400, detail="Specimen with this name already exists for this device")
     db_project.name = project_data.name
     db_project.inward_design_pressure = project_data.inward_design_pressure
     db_project.outward_design_pressure = project_data.outward_design_pressure
