@@ -62,6 +62,7 @@ services:
       - db
     volumes:
       - ./src/management_service/alembic/versions:/app/alembic/versions
+      - ./src/management_service/app:/app/app
       - ./uploads:/app/uploads
     restart: always
 
@@ -85,13 +86,13 @@ services:
       - POLL_INTERVAL=0.05
       - LOG_LEVEL=INFO
       - UNIT_OF_MEASUREMENT=inch  # Options: mm (default) or inch
-      # Configure devices directly using environment variables (alternative to config file)
-      # - SICK_DEVICES=device1:1:1,device2:1:2,pressure_sensor1:2:1
+    # Configure devices directly using environment variables (alternative to config file)
+    # - SICK_DEVICES=device1:1:1,device2:1:2,pressure_sensor1:2:1
     volumes:
       # Mount configuration file
       - ./deployment/sick-config/config-1.json:/app/config.json
-      # Mount .env file
-      # - ./deployment/sick-config/.env:/app/.env
+    # Mount .env file
+    # - ./deployment/sick-config/.env:/app/.env
     restart: always
 
     logging:
@@ -113,13 +114,13 @@ services:
       - POLL_INTERVAL=0.05
       - LOG_LEVEL=INFO
       - UNIT_OF_MEASUREMENT=inch  # Options: mm (default) or inch
-      # Configure devices directly using environment variables (alternative to config file)
-      # - SICK_DEVICES=device1:1:1,device2:1:2,pressure_sensor1:2:1
+    # Configure devices directly using environment variables (alternative to config file)
+    # - SICK_DEVICES=device1:1:1,device2:1:2,pressure_sensor1:2:1
     volumes:
       # Mount configuration file
       - ./deployment/sick-config/config-2.json:/app/config.json
-      # Mount .env file
-      # - ./deployment/sick-config/.env:/app/.env
+    # Mount .env file
+    # - ./deployment/sick-config/.env:/app/.env
     restart: always
 
     logging:
@@ -144,14 +145,14 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # production_service:
-  #   image: httpd:latest
-  #   ports:
-  #   - '80:80'
-  #   restart: always
-  #   volumes:
-  #   - ./legacy/production:/usr/local/apache2/htdocs
-  #   - ./deployment/config/config.json:/usr/local/apache2/htdocs/config.json
+# production_service:
+#   image: httpd:latest
+#   ports:
+#   - '80:80'
+#   restart: always
+#   volumes:
+#   - ./legacy/production:/usr/local/apache2/htdocs
+#   - ./deployment/config/config.json:/usr/local/apache2/htdocs/config.json
 
 volumes:
   postgres_data:
