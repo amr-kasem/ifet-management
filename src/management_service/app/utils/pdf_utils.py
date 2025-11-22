@@ -115,11 +115,11 @@ class IFETReportTemplate:
             
             # Position watermark in center with rotation
             canvas.translate(width/2, height/2)
-            canvas.rotate(45)
+          #  canvas.rotate(45)
             
             # Set transparency (higher value = more visible)
-            canvas.setFillAlpha(0.15)
-            canvas.setStrokeAlpha(0.15)
+            canvas.setFillAlpha(1)
+            canvas.setStrokeAlpha(1)
             
             # Draw the watermark image
             canvas.drawImage(
