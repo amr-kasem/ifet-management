@@ -813,15 +813,171 @@ def create_project_parent(project_parent: ProjectParentCreateSchema, db: Session
 @app.get("/projects/{project_id}/report")
 async def download_specimen_report(project_id: int, db: Session = Depends(get_db)):
     """
-    Download specimen report for a specific project
+    Download comprehensive test report for all specimens under the project parent
+    Note: When user selects any specimen, report includes ALL specimens in that project parent
     """
+    from sqlalchemy.orm import joinedload
+    
+    # Get the project to find its parent
     db_project = db.query(Project).filter(Project.id == project_id).first()
+    
     if not db_project:
         raise HTTPException(status_code=404, detail="Project not found")
     
+    # If project has no parent, treat it as a standalone project
+    if not db_project.parent_id:
+        raise HTTPException(status_code=400, detail="Project has no parent. Cannot generate comprehensive report.")
+    
+    # Get the project parent
+    project_parent = db.query(ProjectParent).filter(ProjectParent.id == db_project.parent_id).first()
+    
+    if not project_parent:
+        raise HTTPException(status_code=404, detail="Project parent not found")
+    
+    # Get ALL specimens for this parent with all their test data eagerly loaded
+    specimens = db.query(Project).filter(Project.parent_id == db_project.parent_id)\
+        .options(
+            joinedload(Project.device),
+            joinedload(Project.static_tests).joinedload(StaticTest.trials).joinedload(StaticTestResult.deflections),
+            joinedload(Project.cyclic_tests).joinedload(CyclicTest.trials).joinedload(CyclicTestResult.deflections),
+            joinedload(Project.infiltration_tests),
+            joinedload(Project.missile_impact_tests).joinedload(MissileImpactTest.shots)
+        ).all()
+    
+    if not specimens:
+        raise HTTPException(status_code=404, detail="No specimens found for this project parent")
+    
+    # Build comprehensive report data for ALL specimens
+    report_data = {
+        'project_parent': {
+            'id': project_parent.id,
+            'name': project_parent.name
+        },
+        'specimens': []
+    }
+    
+    # Collect data for each specimen
+    for specimen in specimens:
+        specimen_data = {
+            'id': specimen.id,
+            'name': specimen.name,
+            'inward_design_pressure': specimen.inward_design_pressure,
+            'outward_design_pressure': specimen.outward_design_pressure,
+            'device': {
+                'id': specimen.device.id,
+                'name': specimen.device.name,
+                'turbo_mode': specimen.device.turbo_mode,
+                'turbo_slave': specimen.device.turbo_slave
+            },
+            'static_tests': [],
+            'cyclic_tests': [],
+            'infiltration_tests': [],
+            'missile_impact_tests': []
+        }
+        
+        # Collect static test data
+        for static_test in specimen.static_tests:
+            test_data = {
+                'id': static_test.id,
+                'index': static_test.index,
+                'type': static_test.type,
+                'pressure': static_test.pressure,
+                'pressure_factor': static_test.pressure_factor,
+                'duration': static_test.duration,
+                'finished': static_test.finished,
+                'trials': []
+            }
+            
+            for trial in static_test.trials:
+                trial_data = {
+                    'trial_number': trial.trial_number,
+                    'result': trial.result,
+                    'note': trial.note,
+                    'image_path': trial.image_path,
+                    'deflections': []
+                }
+                
+                for deflection in trial.deflections:
+                    trial_data['deflections'].append({
+                        'gauge': deflection.deflection_gauge,
+                        'max_deflection': deflection.max_deflection,
+                        'permanent_deflection': deflection.permanent_deflection,
+                        'recovery': deflection.recovery
+                    })
+                
+                test_data['trials'].append(trial_data)
+            
+            specimen_data['static_tests'].append(test_data)
+        
+        # Collect cyclic test data
+        for cyclic_test in specimen.cyclic_tests:
+            test_data = {
+                'id': cyclic_test.id,
+                'index': cyclic_test.index,
+                'type': cyclic_test.type,
+                'cycles': cyclic_test.cycles,
+                'low_pressure': cyclic_test.low_pressure,
+                'high_pressure': cyclic_test.high_pressure,
+                'current_cycle': cyclic_test.current_cycle,
+                'finished': cyclic_test.finished,
+                'trials': []
+            }
+            
+            for trial in cyclic_test.trials:
+                trial_data = {
+                    'trial_number': trial.trial_number,
+                    'result': trial.result,
+                    'note': trial.note,
+                    'image_path': trial.image_path,
+                    'deflections': []
+                }
+                
+                for deflection in trial.deflections:
+                    trial_data['deflections'].append({
+                        'gauge': deflection.deflection_gauge,
+                        'max_deflection': deflection.max_deflection,
+                        'permanent_deflection': deflection.permanent_deflection,
+                        'recovery': deflection.recovery
+                    })
+                
+                test_data['trials'].append(trial_data)
+            
+            specimen_data['cyclic_tests'].append(test_data)
+        
+        # Collect infiltration test data
+        for inf_test in specimen.infiltration_tests:
+            specimen_data['infiltration_tests'].append({
+                'id': inf_test.id,
+                'type': inf_test.type,
+                'pressure': inf_test.pressure,
+                'duration': inf_test.duration,
+                'leakage': inf_test.leakage
+            })
+        
+        # Collect missile impact test data
+        for missile_test in specimen.missile_impact_tests:
+            test_data = {
+                'id': missile_test.id,
+                'missile': missile_test.missile,
+                'missile_weight': missile_test.missile_weight,
+                'shots': []
+            }
+            
+            for shot in missile_test.shots:
+                test_data['shots'].append({
+                    'area': shot.area,
+                    'velocity': shot.velocity,
+                    'result': shot.result,
+                    'note': shot.note
+                })
+            
+            specimen_data['missile_impact_tests'].append(test_data)
+        
+        report_data['specimens'].append(specimen_data)
+    
     # Create temporary file for the PDF
     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
-        pdf_path = create_test_report_pdf(db_project, temp_file.name)
+        pdf_path = create_test_report_pdf(report_data, temp_file.name)
     
     # Return the PDF as a file response with inline disposition
     return FileResponse(
@@ -829,4 +985,171 @@ async def download_specimen_report(project_id: int, db: Session = Depends(get_db
         filename=f"project_{project_id}_report.pdf",
         media_type="application/pdf",
         headers={"Content-Disposition": f"inline; filename=project_{project_id}_report.pdf"}
+    )
+
+
+@app.get("/project-parents/{parent_id}/report")
+async def download_project_parent_report(parent_id: int, db: Session = Depends(get_db)):
+    """
+    Download comprehensive test report for a project parent including all specimens
+    """
+    from sqlalchemy.orm import joinedload
+    
+    # Get the project parent with all related data
+    project_parent = db.query(ProjectParent).filter(ProjectParent.id == parent_id).first()
+    
+    if not project_parent:
+        raise HTTPException(status_code=404, detail="Project parent not found")
+    
+    # Get all projects (specimens) for this parent with all their test data eagerly loaded
+    specimens = db.query(Project).filter(Project.parent_id == parent_id)\
+        .options(
+            joinedload(Project.device),
+            joinedload(Project.static_tests).joinedload(StaticTest.trials).joinedload(StaticTestResult.deflections),
+            joinedload(Project.cyclic_tests).joinedload(CyclicTest.trials).joinedload(CyclicTestResult.deflections),
+            joinedload(Project.infiltration_tests),
+            joinedload(Project.missile_impact_tests).joinedload(MissileImpactTest.shots)
+        ).all()
+    
+    if not specimens:
+        raise HTTPException(status_code=404, detail="No specimens found for this project parent")
+    
+    # Prepare comprehensive data structure
+    report_data = {
+        'project_parent': {
+            'id': project_parent.id,
+            'name': project_parent.name
+        },
+        'specimens': []
+    }
+    
+    # Collect data for each specimen
+    for specimen in specimens:
+        specimen_data = {
+            'id': specimen.id,
+            'name': specimen.name,
+            'inward_design_pressure': specimen.inward_design_pressure,
+            'outward_design_pressure': specimen.outward_design_pressure,
+            'device': {
+                'id': specimen.device.id,
+                'name': specimen.device.name,
+                'turbo_mode': specimen.device.turbo_mode,
+                'turbo_slave': specimen.device.turbo_slave
+            },
+            'static_tests': [],
+            'cyclic_tests': [],
+            'infiltration_tests': [],
+            'missile_impact_tests': []
+        }
+        
+        # Collect static test data
+        for static_test in specimen.static_tests:
+            test_data = {
+                'id': static_test.id,
+                'index': static_test.index,
+                'type': static_test.type,
+                'pressure': static_test.pressure,
+                'pressure_factor': static_test.pressure_factor,
+                'duration': static_test.duration,
+                'finished': static_test.finished,
+                'trials': []
+            }
+            
+            for trial in static_test.trials:
+                trial_data = {
+                    'trial_number': trial.trial_number,
+                    'result': trial.result,
+                    'note': trial.note,
+                    'image_path': trial.image_path,
+                    'deflections': []
+                }
+                
+                for deflection in trial.deflections:
+                    trial_data['deflections'].append({
+                        'gauge': deflection.deflection_gauge,
+                        'max_deflection': deflection.max_deflection,
+                        'permanent_deflection': deflection.permanent_deflection,
+                        'recovery': deflection.recovery
+                    })
+                
+                test_data['trials'].append(trial_data)
+            
+            specimen_data['static_tests'].append(test_data)
+        
+        # Collect cyclic test data
+        for cyclic_test in specimen.cyclic_tests:
+            test_data = {
+                'id': cyclic_test.id,
+                'index': cyclic_test.index,
+                'type': cyclic_test.type,
+                'cycles': cyclic_test.cycles,
+                'low_pressure': cyclic_test.low_pressure,
+                'high_pressure': cyclic_test.high_pressure,
+                'current_cycle': cyclic_test.current_cycle,
+                'finished': cyclic_test.finished,
+                'trials': []
+            }
+            
+            for trial in cyclic_test.trials:
+                trial_data = {
+                    'trial_number': trial.trial_number,
+                    'result': trial.result,
+                    'note': trial.note,
+                    'image_path': trial.image_path,
+                    'deflections': []
+                }
+                
+                for deflection in trial.deflections:
+                    trial_data['deflections'].append({
+                        'gauge': deflection.deflection_gauge,
+                        'max_deflection': deflection.max_deflection,
+                        'permanent_deflection': deflection.permanent_deflection,
+                        'recovery': deflection.recovery
+                    })
+                
+                test_data['trials'].append(trial_data)
+            
+            specimen_data['cyclic_tests'].append(test_data)
+        
+        # Collect infiltration test data
+        for inf_test in specimen.infiltration_tests:
+            specimen_data['infiltration_tests'].append({
+                'id': inf_test.id,
+                'type': inf_test.type,
+                'pressure': inf_test.pressure,
+                'duration': inf_test.duration,
+                'leakage': inf_test.leakage
+            })
+        
+        # Collect missile impact test data
+        for missile_test in specimen.missile_impact_tests:
+            test_data = {
+                'id': missile_test.id,
+                'missile': missile_test.missile,
+                'missile_weight': missile_test.missile_weight,
+                'shots': []
+            }
+            
+            for shot in missile_test.shots:
+                test_data['shots'].append({
+                    'area': shot.area,
+                    'velocity': shot.velocity,
+                    'result': shot.result,
+                    'note': shot.note
+                })
+            
+            specimen_data['missile_impact_tests'].append(test_data)
+        
+        report_data['specimens'].append(specimen_data)
+    
+    # Create temporary file for the PDF
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+        pdf_path = create_test_report_pdf(report_data, temp_file.name)
+    
+    # Return the PDF as a file response with inline disposition
+    return FileResponse(
+        path=pdf_path,
+        filename=f"project_parent_{parent_id}_report.pdf",
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename=project_parent_{parent_id}_report.pdf"}
     )
