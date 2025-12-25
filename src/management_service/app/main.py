@@ -105,7 +105,16 @@ def get_projects_by_device_id(device_id: int, parent_id: Optional[int] = None, d
     projects = query.all()
     if not projects:
         raise HTTPException(status_code=404, detail="No projects found for this device_id")
-    return projects
+    
+    # Sort by id descending to get most recent first
+    sorted_by_id = sorted(projects, key=lambda x: x.id, reverse=True)
+    # Get the two most recent
+    most_recent = sorted_by_id[:2]
+    # Get the rest and sort alphabetically by name
+    rest = sorted_by_id[2:]
+    rest_sorted = sorted(rest, key=lambda x: x.name)
+    # Combine: most recent two first, then rest alphabetically
+    return most_recent + rest_sorted
 
 # # List all projects
 # @app.get("/projects/", response_model=List[ProjectSchema])
@@ -788,7 +797,16 @@ async def update_test_result(
 
 @app.get("/project-parents", response_model=List[ProjectParentSchema])
 def get_project_parents(db: Session = Depends(get_db)):
-    return db.query(ProjectParent).all()
+    all_parents = db.query(ProjectParent).all()
+    # Sort by id descending to get most recent first
+    sorted_by_id = sorted(all_parents, key=lambda x: x.id, reverse=True)
+    # Get the two most recent
+    most_recent = sorted_by_id[:2]
+    # Get the rest and sort alphabetically by name
+    rest = sorted_by_id[2:]
+    rest_sorted = sorted(rest, key=lambda x: x.name)
+    # Combine: most recent two first, then rest alphabetically
+    return most_recent + rest_sorted
 
 @app.post("/project-parents", response_model=ProjectParentSchema)
 def create_project_parent(project_parent: ProjectParentCreateSchema, db: Session = Depends(get_db)):
