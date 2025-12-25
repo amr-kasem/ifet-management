@@ -20,6 +20,8 @@ class ProjectParent(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False, unique=True)
     
+    projects = relationship("Project", back_populates="parent", foreign_keys="[Project.parent_id]")
+    
 class Project(Base):
     __tablename__ = "projects"
 
@@ -30,6 +32,7 @@ class Project(Base):
     inward_design_pressure = Column(Float, nullable=False)
     outward_design_pressure = Column(Float, nullable=False)
     device = relationship("Device", back_populates="projects")
+    parent = relationship("ProjectParent", back_populates="projects", foreign_keys=[parent_id])
     static_tests = relationship("StaticTest", back_populates="project", cascade="all, delete-orphan")
     infiltration_tests = relationship("InfiltrationTest", back_populates="project", cascade="all, delete-orphan")
     missile_impact_tests = relationship("MissileImpactTest", back_populates="project", cascade="all, delete-orphan")
