@@ -28,6 +28,7 @@ services:
     image: eclipse-mosquitto
     volumes:
       - ./deployment/config/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - mosquitto_data:/mosquitto/data
     ports:
       - "1883:1883"
       - "8084:8084"
@@ -60,4 +61,6 @@ volumes:
   postgres_data:
     driver: local
   pgadmin_data:
+    driver: local
+  mosquitto_data:
     driver: local
