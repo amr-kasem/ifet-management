@@ -66,6 +66,26 @@
         "role": "pressure"
       },
       {
+        "name": "4",
+        "address": "4",
+        "debug": false,
+        "frequency": 20,
+        "value": "",
+        "active": true,
+        "type": "pressure",
+        "role": "pressure"
+      },
+      {
+        "name": "5",
+        "address": "5",
+        "debug": false,
+        "frequency": 20,
+        "value": "",
+        "active": true,
+        "type": "pressure",
+        "role": "pressure"
+      },
+      {
         "name": "Flow",
         "port": "/dev/ttyACM0",
         "address": "11",
@@ -84,7 +104,6 @@
         "role": "flow"
       }
     ],
-
     "vfd": {
       "name": "vfd1",
       "port": "/dev/ttyACM0",
@@ -100,33 +119,46 @@
       "debug": false,
       "frequency": 20
     },
-
     "valves": [
       {
         "name": "1",
         "pin": 13,
-        "role": ["ACTIVE", "POSITIVE", "POSITIVE_RELEASE"],
+        "role": [
+          "ACTIVE",
+          "POSITIVE",
+          "POSITIVE_RELEASE"
+        ],
         "value": 0,
         "address": "1"
       },
       {
         "name": "2",
         "pin": 35,
-        "role": ["ACTIVE", "NEGATIVE", "NEGATIVE_RELEASE"],
+        "role": [
+          "ACTIVE",
+          "NEGATIVE",
+          "NEGATIVE_RELEASE"
+        ],
         "value": 0,
         "address": "2"
       },
       {
         "name": "3",
         "pin": 31,
-        "role": ["ACTIVE", "POSITIVE"],
+        "role": [
+          "ACTIVE",
+          "POSITIVE"
+        ],
         "value": 0,
         "address": "3"
       },
       {
         "name": "4",
         "pin": 15,
-        "role": ["ACTIVE", "NEGATIVE"],
+        "role": [
+          "ACTIVE",
+          "NEGATIVE"
+        ],
         "value": 0,
         "address": "4"
       }
@@ -140,7 +172,6 @@
       "valve6": 1
     }
   },
-
   {
     "device_id": "device2",
     "status": "connecting ...",
@@ -203,9 +234,28 @@
         "frequency": 20,
         "value": "",
         "role": "pressure"
+      },
+      {
+        "name": "4",
+        "address": "4",
+        "debug": false,
+        "frequency": 20,
+        "value": "",
+        "active": true,
+        "type": "pressure",
+        "role": "pressure"
+      },
+      {
+        "name": "5",
+        "address": "6",
+        "debug": false,
+        "frequency": 20,
+        "value": "",
+        "active": true,
+        "type": "pressure",
+        "role": "pressure"
       }
     ],
-
     "vfd": {
       "name": "vfd1",
       "port": "/dev/ttyACM0",
@@ -221,33 +271,46 @@
       "debug": false,
       "frequency": 20
     },
-
     "valves": [
       {
         "name": "1",
         "pin": 13,
-        "role": ["ACTIVE", "POSITIVE", "POSITIVE_RELEASE"],
+        "role": [
+          "ACTIVE",
+          "POSITIVE",
+          "POSITIVE_RELEASE"
+        ],
         "value": 0,
         "address": "1"
       },
       {
         "name": "2",
         "pin": 35,
-        "role": ["ACTIVE", "NEGATIVE", "NEGATIVE_RELEASE"],
+        "role": [
+          "ACTIVE",
+          "NEGATIVE",
+          "NEGATIVE_RELEASE"
+        ],
         "value": 0,
         "address": "2"
       },
       {
         "name": "3",
         "pin": 31,
-        "role": ["ACTIVE", "POSITIVE"],
+        "role": [
+          "ACTIVE",
+          "POSITIVE"
+        ],
         "value": 0,
         "address": "3"
       },
       {
         "name": "4",
         "pin": 15,
-        "role": ["ACTIVE", "NEGATIVE"],
+        "role": [
+          "ACTIVE",
+          "NEGATIVE"
+        ],
         "value": 0,
         "address": "4"
       }
