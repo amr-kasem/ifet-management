@@ -139,7 +139,11 @@ celerybeat.pid
 *.sage.py
 
 # Environments
+# Secrets live in .env only (P0/Ref 42). .env.example is the committed template.
 .env
+.env.*
+!.env.example
+*.env
 .venv
 env/
 venv/

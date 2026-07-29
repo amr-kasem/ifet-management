@@ -1,11 +1,15 @@
+# Every credential in this file comes from `.env` (gitignored) — see `.env.example`.
+#   cp .env.example .env  &&  edit  &&  docker compose config   # validates before starting
+# `${VAR:?msg}` means compose REFUSES to start when VAR is missing, rather than
+# silently falling back to a well-known default password.
 services:
 
   db:
     image: postgres:13
     environment:
-      POSTGRES_DB: report_db
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: password
+      POSTGRES_DB: ${POSTGRES_DB:-report_db}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env (see .env.example)}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env (see .env.example)}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: always
@@ -19,8 +23,8 @@ services:
   pgadmin:
     image: dpage/pgadmin4
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@admin.com
-      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:?set PGADMIN_DEFAULT_EMAIL in .env (see .env.example)}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:?set PGADMIN_DEFAULT_PASSWORD in .env (see .env.example)}
     ports:
       - "8081:80"
     depends_on:
@@ -54,8 +58,16 @@ services:
     build: ./src/management_service/
     environment:
       PORT: 8000
-      POSTGRES_DB: report_db
-      DATABASE_URL: "postgresql://user:password@db:5432/report_db"
+      POSTGRES_DB: ${POSTGRES_DB:-report_db}
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env (see .env.example)}
+      # Airtable integration (P0/Ref 42). Blank token + sync disabled is a valid
+      # state: nothing calls Airtable until both are set.
+      AIRTABLE_TOKEN: ${AIRTABLE_TOKEN:-}
+      AIRTABLE_BASE_ID: ${AIRTABLE_BASE_ID:-}
+      AIRTABLE_RESULTS_TABLE: ${AIRTABLE_RESULTS_TABLE:-LabOS Raw Test Results}
+      AIRTABLE_WRITE_ALLOWLIST: ${AIRTABLE_WRITE_ALLOWLIST:-LabOS Raw Test Results}
+      AIRTABLE_SYNC_ENABLED: ${AIRTABLE_SYNC_ENABLED:-false}
+      LABOS_PUBLIC_ORIGIN: ${LABOS_PUBLIC_ORIGIN:-}
     ports:
       - '8000:8000'
     depends_on:
@@ -79,7 +91,7 @@ services:
     depends_on:
       - mosquitto
     environment:
-      - SICK_API_HOST=10.1.10.85
+      - SICK_API_HOST=${SICK_API_HOST_1:?set SICK_API_HOST_1 in .env (production has 1 and 2 swapped relative to the old repo defaults)}
       - SICK_API_PORT=80
       - MQTT_BROKER=mosquitto
       - MQTT_PORT=1883
@@ -107,7 +119,7 @@ services:
     depends_on:
       - mosquitto
     environment:
-      - SICK_API_HOST=10.1.10.229
+      - SICK_API_HOST=${SICK_API_HOST_2:?set SICK_API_HOST_2 in .env (production has 1 and 2 swapped relative to the old repo defaults)}
       - SICK_API_PORT=80
       - MQTT_BROKER=mosquitto
       - MQTT_PORT=1883
