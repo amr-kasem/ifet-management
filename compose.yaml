@@ -64,9 +64,12 @@ services:
       # state: nothing calls Airtable until both are set.
       AIRTABLE_TOKEN: ${AIRTABLE_TOKEN:-}
       AIRTABLE_BASE_ID: ${AIRTABLE_BASE_ID:-}
-      AIRTABLE_RESULTS_TABLE: ${AIRTABLE_RESULTS_TABLE:-LabOS Raw Test Results}
-      AIRTABLE_WRITE_ALLOWLIST: ${AIRTABLE_WRITE_ALLOWLIST:-LabOS Raw Test Results}
+      AIRTABLE_RESULTS_TABLE: ${AIRTABLE_RESULTS_TABLE:-tblnc9SsbXU0C0FWh}
+      AIRTABLE_WRITE_ALLOWLIST: ${AIRTABLE_WRITE_ALLOWLIST:-tblnc9SsbXU0C0FWh}
       AIRTABLE_SYNC_ENABLED: ${AIRTABLE_SYNC_ENABLED:-false}
+      # Separate opt-in for the production base; guide v2 keeps their processing
+      # automation off until acceptance testing is signed off.
+      AIRTABLE_ALLOW_PRODUCTION_WRITE: ${AIRTABLE_ALLOW_PRODUCTION_WRITE:-false}
       LABOS_PUBLIC_ORIGIN: ${LABOS_PUBLIC_ORIGIN:-}
     ports:
       - '8000:8000'
