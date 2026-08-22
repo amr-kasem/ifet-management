@@ -168,3 +168,63 @@ READ_SIDE_EXPECTED = (
     "Loading Sequence (JSON)",
     "Required Testing Parameters (JSON)",
 )
+
+
+# ------------------------------------------------- §5 blank / null / sentinel
+# Airtable rejects "" on number, date and single-select fields, so "send an
+# empty string" is not implementable as a general rule. LabOS omits the key
+# instead. `null` stays reserved for "explicitly clear a cell", which LabOS
+# never does — records are immutable once terminal.
+#
+# 0 and False are DATA, not blanks. A 0 PSF reading is a measurement.
+SENTINEL_VALUES = ("", "N/A", "n/a", "NA", "Not Available", "-", "--", "none", "None")
+
+# ------------------------------------------------- §5.1 required by test type
+STATIC_LOAD = "Static Load"
+CYCLES = "Cycles"
+IMPACT = "Impact"
+FORCED_ENTRY = "Forced Entry"
+ANSI_Z97 = "ANSI Z97.1"
+
+TEST_TYPES = (STATIC_LOAD, CYCLES, IMPACT, FORCED_ENTRY, ANSI_Z97)
+
+IN_PROGRESS = "In Progress"
+COMPLETED = "Completed"
+ABORTED = "Aborted"
+TERMINAL_STATUSES = (COMPLETED, ABORTED)
+
+# Required when `Test Status` is Completed. Keyed by LabOS field name; the
+# builder resolves wire names itself. Mirrors contract §5.1 exactly — a field
+# that is absent from the base is still required, it just travels inside
+# `Complete LabOS JSON Response` instead of as a column (§10.15).
+REQUIRED_BY_TEST_TYPE = {
+    STATIC_LOAD: ("Measured Value", "Unit", "Max Pressure Achieved",
+                  "Deflection Value", "Deflection Unit", "Test Result",
+                  "Result Detail (JSON)", "Required Value", "Required Unit"),
+    CYCLES: ("Measured Value", "Unit", "Max Pressure Achieved",
+             "Deflection Value", "Deflection Unit", "Cycles Required",
+             "Cycles Completed", "Test Result", "Result Detail (JSON)",
+             "Required Value", "Required Unit"),
+    IMPACT: ("Impact Result", "Test Result", "Result Detail (JSON)", "Photos"),
+    FORCED_ENTRY: ("Test Result", "Result Detail (JSON)", "Photos"),
+    ANSI_Z97: ("Test Result", "Result Detail (JSON)", "Photos"),
+}
+
+# Always required, whatever the test type or status (§4.1).
+ALWAYS_REQUIRED = (
+    "Airtable Project ID", "Airtable Mock-Up ID", "Airtable Protocol ID",
+    "Airtable Section ID", "LabOS Test ID", "LabOS Attempt ID",
+    "Attempt Number", "Schema Version", "Test Type", "Test Status",
+    "Test Name", "Testing Start Date", "LabOS Created At", "LabOS Updated At",
+)
+
+# Additionally required on a terminal write (§4.5).
+#
+# `Testing End Date` is required here even though guide v2 deleted the column
+# (§10.13): the contract requires the value, and the builder routes it into
+# `Complete LabOS JSON Response` rather than dropping it. Same for `Test Name`
+# above. Requirements are about the DATA, not about which column happens to
+# exist this week — otherwise an Airtable schema decision quietly reduces what
+# a completed attempt has to prove.
+TERMINAL_REQUIRED = ("Operator Name", "Retest Required", "Testing Continued",
+                     "Testing End Date")

@@ -6,6 +6,13 @@ because `report-api`'s `app/` is bind-mounted into a production container.
 """
 
 from .client import AirtableClient
+from .envelope import (
+    EnvelopeError,
+    build,
+    build_start,
+    build_terminal,
+    options_from_snapshot,
+)
 from .errors import (
     AirtableAuthError,
     AirtableError,
@@ -18,6 +25,11 @@ from .errors import (
 
 __all__ = [
     "AirtableClient",
+    "build",
+    "build_start",
+    "build_terminal",
+    "options_from_snapshot",
+    "EnvelopeError",
     "AirtableError",
     "AirtableAuthError",
     "AirtableRateLimited",
