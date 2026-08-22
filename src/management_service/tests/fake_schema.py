@@ -21,10 +21,17 @@ RAW_DATA_FIELDS = [
     _f("LabOS Attempt ID"), _f("LabOS Test ID"), _f("Attempt Number", "number"),
     _f("Schema Version"), _f("Airtable Project ID"), _f("Airtable Mockup ID"),
     _f("Airtable Protocol ID"), _f("Airtable Section ID"),
-    _sel("Test Type", ["Static Load", "Cycles", "Impact", "Forced Entry", "ANSI Z97.1"]),
-    _sel("Test Status", ["In Progress", "Completed", "Aborted"]),
-    # v2's worked example sends "Passed" — this is contract §10.16 in the wild.
-    _sel("Test Result", ["Passed", "Failed", "Inconclusive"]),
+    # All three sets below are transcribed VERBATIM from the live base by the
+    # schema probe on 2026-08-23 — including the two surprises this fixture
+    # exists to keep us honest about:
+    #   · Test Type offers only "Static Load" (§10.17 — four LabOS test types
+    #     have nowhere to land),
+    #   · "Abborted" is misspelt in their base (§10.18).
+    _sel("Test Type", ["Static Load"]),
+    _sel("Test Status", ["Not Started", "In Progress", "Completed", "Abborted"]),
+    # v2's worked example sends "Passed" — §10.16, and the base agrees with it.
+    _sel("Test Result", ["Pending", "Passed", "Failed", "Not Applicable",
+                         "Inconclusive"]),
     _f("Test Date", "date"), _f("Operator Name"),
     _f("Retest Required", "checkbox"),
     _sel("Testing Continued", ["Continued", "Stopped"]),

@@ -152,7 +152,9 @@ class Lifecycle(unittest.TestCase):
         v = completed(**{"Abort Reason": "Equipment Fault"})
         v.pop("Test Result")
         w = build_terminal(v, status=C.ABORTED)
-        self.assertEqual(w["Test Status"], "Aborted")
+        # LabOS says "Aborted"; their base spells it "Abborted" (§10.18) and a
+        # single select will not accept anything else.
+        self.assertEqual(w["Test Status"], "Abborted")
         # No column for it yet, so it must survive in the JSON valve.
         self.assertEqual(detail(w)["labos_extra"]["abort_reason"], "Equipment Fault")
 
@@ -228,24 +230,52 @@ class SelectOptions(unittest.TestCase):
             build_terminal(completed(**{"Unit": "furlongs"}))
         self.assertIn("never invents a select option", str(ctx.exception))
 
-    def test_contract_spelling_accepted_by_default(self):
-        self.assertEqual(build_terminal(completed())["Test Result"], "Pass")
+    def test_labos_spelling_is_translated_to_theirs(self):
+        """§10.16 — callers speak LabOS; the wire speaks Airtable."""
+        self.assertEqual(build_terminal(completed())["Test Result"], "Passed")
 
-    def test_live_options_override_the_contract(self):
-        """§10.16 — their base says 'Passed'. The live set is authoritative."""
-        live = {"Test Result": ("Passed", "Failed", "Inconclusive")}
-        with self.assertRaises(EnvelopeError):
-            build_terminal(completed(), live_options=live)          # 'Pass' now invalid
-        w = build_terminal(completed(**{"Test Result": "Passed"}), live_options=live)
-        self.assertEqual(w["Test Result"], "Passed")
+    def test_their_spelling_is_not_accepted_from_a_caller(self):
+        """The translation has exactly one direction, so there is one vocabulary
+        inside LabOS. A caller passing 'Passed' is a caller who guessed."""
+        with self.assertRaises(EnvelopeError) as ctx:
+            build_terminal(completed(**{"Test Result": "Passed"}))
+        self.assertIn("never invents a select option", str(ctx.exception))
+
+    def test_translated_value_is_checked_against_the_live_set(self):
+        live = {"Test Result": ("Pending", "Passed", "Failed", "Not Applicable",
+                                "Inconclusive")}
+        self.assertEqual(
+            build_terminal(completed(), live_options=live)["Test Result"], "Passed")
+
+    def test_option_missing_from_the_live_base_is_refused_locally(self):
+        """§10.17 — the real case: their base has no option for four of the five
+        LabOS test types, so this must fail here rather than as a 422."""
+        live = {"Test Result": ("Inconclusive",)}
+        with self.assertRaises(EnvelopeError) as ctx:
+            build_terminal(completed(), live_options=live)
+        self.assertIn("live base has no option", str(ctx.exception))
+        self.assertIn("translates to", str(ctx.exception))
 
     def test_options_from_snapshot_feeds_the_builder(self):
         from app.airtable import probe
         from tests import fake_schema as FS
         live = options_from_snapshot(probe.build_snapshot(FS.schema()))
-        self.assertEqual(live["Test Result"], ("Passed", "Failed", "Inconclusive"))
-        w = build_terminal(completed(**{"Test Result": "Passed"}), live_options=live)
+        self.assertEqual(live["Test Result"],
+                         ("Pending", "Passed", "Failed", "Not Applicable",
+                          "Inconclusive"))
+        w = build_terminal(completed(), live_options=live)
         self.assertEqual(w["Test Result"], "Passed")
+
+    def test_only_static_load_survives_the_live_test_type_set(self):
+        """§10.17, stated as an executable fact rather than a note."""
+        from app.airtable import probe
+        from tests import fake_schema as FS
+        live = options_from_snapshot(probe.build_snapshot(FS.schema()))
+        self.assertEqual(live["Test Type"], ("Static Load",))
+        for unsupported in ("Cycles", "Impact", "Forced Entry", "ANSI Z97.1"):
+            with self.assertRaises(EnvelopeError, msg=unsupported):
+                build_terminal(completed(**{"Test Type": unsupported}),
+                               live_options=live)
 
 
 class TestDateCollapse(unittest.TestCase):

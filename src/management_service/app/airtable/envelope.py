@@ -63,26 +63,47 @@ def _check_sentinel(name, value):
 
 
 def _check_option(field, value, live_options):
-    """Validate a single-select value. Live options win over the contract's.
+    """Validate a single-select value and return the spelling to send.
 
-    The probe writes a schema snapshot; feeding its option sets in here is what
-    stops the `Pass` / `Passed` mismatch (§10.16) from reaching the API as a
-    422 — or worse, creating a duplicate option with `typecast`.
+    Two checks with a translation between them, because LabOS and Airtable do
+    not agree on how to spell several options (§10.16, §10.18):
+
+    1.  `value` must be one of the LabOS options in contract §4 — this catches
+        a caller inventing a value.
+    2.  it is translated to the base's spelling (`Pass` -> `Passed`, and yes,
+        `Aborted` -> `Abborted`, which is misspelt in their base).
+    3.  the translated value must exist in the live option set, when the
+        probe's snapshot has been passed in.
+
+    Step 3 is what turns "their base has no option for this" into a loud local
+    failure instead of a 422 — or, far worse, a silently created junk option if
+    anyone ever sets `typecast`. `Test Type` is the live case: the base offers
+    only `Static Load`, so four of the five LabOS test types cannot be written
+    at all (§10.17).
     """
-    allowed = None
-    if live_options and field.wire_name in live_options:
-        allowed = live_options[field.wire_name]
-    elif field.options:
-        allowed = field.options
-    if not allowed:
-        return
-    if value not in allowed:
+    if field.options and value not in field.options:
         raise EnvelopeError(
             f"{field.labos_name!r}: {value!r} is not an allowed option "
-            f"{list(allowed)}. Contract §5 — LabOS never invents a select "
+            f"{list(field.options)}. Contract §5 — LabOS never invents a select "
             "option at runtime; this is a contract error, not something to "
             "coerce."
         )
+
+    wire_value = field.wire_option(value)
+
+    if live_options and field.wire_name in live_options:
+        allowed = live_options[field.wire_name]
+        if allowed and wire_value not in allowed:
+            hint = ""
+            if wire_value != value:
+                hint = f" (LabOS {value!r} translates to {wire_value!r})"
+            raise EnvelopeError(
+                f"{field.labos_name!r}: the live base has no option "
+                f"{wire_value!r}{hint} — it offers {list(allowed)}. Contract §5: "
+                "the option has to be added on the Airtable side; LabOS will not "
+                "coerce or invent one."
+            )
+    return wire_value
 
 
 # ------------------------------------------------------------------- the builder
@@ -189,7 +210,7 @@ def build(values, *, status, live_options=None, allow_unreferenced_correction=Fa
             continue
 
         if field.kind in ("single select",) or (field.options and field.expected_live):
-            _check_option(field, value, live_options)
+            value = _check_option(field, value, live_options)
 
         if field.kind in ("datetime", "date", "date/datetime"):
             value = _iso(value, name)

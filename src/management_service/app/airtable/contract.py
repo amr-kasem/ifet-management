@@ -27,9 +27,11 @@ OPTIONAL = "O"
 
 
 class Field:
-    __slots__ = ("labos_name", "wire_name", "req", "v2", "kind", "options", "note")
+    __slots__ = ("labos_name", "wire_name", "req", "v2", "kind", "options",
+                 "option_wire", "note")
 
-    def __init__(self, labos_name, req, v2, kind, wire_name=None, options=None, note=""):
+    def __init__(self, labos_name, req, v2, kind, wire_name=None, options=None,
+                 option_wire=None, note=""):
         self.labos_name = labos_name
         # What actually goes on the wire. Where the Airtable team chose a
         # different name, theirs wins — the LabOS name is internal vocabulary.
@@ -38,7 +40,16 @@ class Field:
         self.v2 = v2
         self.kind = kind
         self.options = tuple(options or ())
+        # Same principle one level down: where their single-select spells an
+        # option differently, theirs wins on the wire and LabOS keeps its own
+        # word internally. Confirmed against the live base by the schema probe
+        # on 2026-08-23 — these are transcribed from the base, not proposed.
+        self.option_wire = dict(option_wire or {})
         self.note = note
+
+    def wire_option(self, value):
+        """Translate a LabOS option to the spelling the base actually holds."""
+        return self.option_wire.get(value, value)
 
     @property
     def expected_live(self):
@@ -79,12 +90,19 @@ FIELDS = [
     # 4.3 descriptors
     Field("Test Name", REQUIRED, ABSENT, "text", note="§10.15 — asked for as first-class"),
     Field("Test Type", REQUIRED, PRESENT, "single select",
-          options=["Static Load", "Cycles", "Impact", "Forced Entry", "ANSI Z97.1"]),
+          options=["Static Load", "Cycles", "Impact", "Forced Entry", "ANSI Z97.1"],
+          note="§10.17 — the live base offers ONLY 'Static Load'; the other four "
+               "have no option to land in and will 422. BLOCKING."),
     Field("Test Status", REQUIRED, PRESENT, "single select",
-          options=["In Progress", "Completed", "Aborted"]),
+          options=["In Progress", "Completed", "Aborted"],
+          option_wire={"Aborted": "Abborted"},
+          note="§10.18 — 'Abborted' is misspelt in their base. LabOS sends their "
+               "spelling verbatim, because a single-select will not accept ours."),
     Field("Test Result", CONDITIONAL, PRESENT, "single select",
           options=["Pass", "Fail", "Inconclusive"],
-          note="§10.16 — their v2 example sends 'Passed', not 'Pass'"),
+          option_wire={"Pass": "Passed", "Fail": "Failed"},
+          note="§10.16 — CLOSED by the probe: the base holds Passed/Failed, so "
+               "their v2 example was right and this contract was wrong."),
     Field("Abort Reason", CONDITIONAL, ABSENT, "single select",
           options=["Specimen Failure", "Equipment Fault", "Operator Stop",
                    "Power/Comms Loss", "Other"],
