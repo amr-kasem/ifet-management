@@ -8,12 +8,32 @@ Week 2 / P1 of the LabOS <-> Airtable integration (Epic IFET-32, Refs 44-47 plus
 internal-plan gap D). Implements write contract v0.3 §3, §4 and §6 in the
 database.
 
-`down_revision` is `3a65a83e0463`, read from the **production database** on
-2026-08-23 (`SELECT * FROM alembic_version`), not from this repository. It has to
-be: `alembic/versions/*` is gitignored here, so the migration chain exists only
-on the node. Of the 29 revisions in it, 28 are empty no-ops that `startup.sh`
-autogenerates on every container restart; `886f54aa575c` is the only one that
-ever created anything. Do not re-point this at a revision found in git.
+`down_revision` is `3a65a83e0463` — the production head on 2026-08-23, read
+from the live database (`SELECT * FROM alembic_version`). The 29 revisions
+preceding this one were pulled off the node and committed the same day; before
+that they were gitignored and existed on exactly one machine, so no migration
+written anywhere else could resolve its parent. Of those 29, only
+`886f54aa575c` ever created anything: the other 28 are empty no-ops, one per
+container restart, produced by the `autogenerate` call that has now been removed
+from `startup.sh`.
+
+    !! BEFORE DEPLOYING, RE-CHECK THE HEAD !!
+
+    Until the startup.sh change ships, every container restart still appends a
+    no-op revision on the node and moves the head. If that happens after this
+    file was written, the node will have a head this migration does not descend
+    from, alembic will see TWO heads, and `upgrade head` fails with
+    "Multiple head revisions are present" — the schema change silently does not
+    apply.
+
+    So: deploy the startup.sh change and this migration TOGETHER, and confirm
+    immediately beforehand that
+
+        SELECT * FROM alembic_version;
+
+    still returns 3a65a83e0463. If it does not, pull the new revisions into
+    the repo, re-point down_revision at the current head, and re-run
+    tests/rehearse_p1_migration.py.
 
 Three properties this migration is built around, because production has 623 live
 attempt rows and there is currently no non-production node to rehearse on:

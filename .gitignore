@@ -2,16 +2,16 @@
 
 # Alembic database migrations.
 #
-# `startup.sh` runs `command.revision(autogenerate=True)` on EVERY container
-# start and the versions/ directory is bind-mounted from the node, so production
-# accumulates one empty no-op migration per restart (28 of them as of
-# 2026-08-23). Those are build artifacts and stay ignored.
+# These ARE tracked, as of 2026-08-23. They were not before, and the cost was
+# concrete: production accumulated 29 revisions that git could not see, the repo
+# carried none, and the chain existed on exactly one machine. A migration
+# written anywhere else could not resolve `down_revision` and would not apply.
 #
-# Hand-written migrations are NOT artifacts. They are reviewed code, and while
-# this pattern ignored the whole directory they could not reach production
-# through git at all — which is why the repo carried no migrations while the
-# node carried 29.
-**/alembic/versions/*_auto_generated_migration.py
+# The 28 no-op revisions in that chain are artifacts of `startup.sh` running
+# autogenerate at every container start. That call is now removed, so the
+# directory only receives reviewed migrations from here on — and the whole
+# history belongs in git, no-ops included, because alembic needs every link to
+# walk the chain.
 **/alembic/*.db
 **/alembic/*.sqlite
 **/alembic/*.sqlite3
@@ -23,21 +23,6 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Alembic database migrations.
-#
-# `startup.sh` runs `command.revision(autogenerate=True)` on EVERY container
-# start and the versions/ directory is bind-mounted from the node, so production
-# accumulates one empty no-op migration per restart (28 of them as of
-# 2026-08-23). Those are build artifacts and stay ignored.
-#
-# Hand-written migrations are NOT artifacts. They are reviewed code, and while
-# this pattern ignored the whole directory they could not reach production
-# through git at all — which is why the repo carried no migrations while the
-# node carried 29.
-**/alembic/versions/*_auto_generated_migration.py
-**/alembic/*.db
-**/alembic/*.sqlite
-**/alembic/*.sqlite3
 # C extensions
 *.so
 
