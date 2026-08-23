@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import sessionmaker, Session
 from app.data.models import *
 from app.data.schema import *
+from app.data import attempts
 from app.domain.cyclic_test_pressure_calculator import CyclicTestPressureCalculator
 from app.domain.static_test_pressure_calculator import StaticTestPressureCalculator
 import logging
@@ -387,7 +388,16 @@ def create_static_test_trial(project_id: int, static_test_index: int, trial_data
         static_test_id=static_test.id,
         trial_number=len(static_test.trials)+1,
         result=None,
-        note=None
+        note=None,
+        # P1 / Ref 46 — an attempt is born with its Airtable identity and in the
+        # In Progress state, not stamped later. The merge key has to exist
+        # before anything can reference the attempt, and `labos_test_id` is
+        # taken from the sibling attempts so a retest joins its own group.
+        **attempts.begin(
+            static_test.trials,
+            test_type="Static Load",
+            test_name=static_test.airtable_section_name,
+        ),
     )   
     
     db.add(new_trial)
@@ -559,7 +569,14 @@ def create_cyclic_test_trial(project_id: int, cyclic_test_index: int, trial_data
         cyclic_test_id=cyclic_test.id,
         trial_number=len(cyclic_test.trials)+1,
         result=None,
-        note=None
+        note=None,
+        # See the static-load endpoint above. "Cycles" is the contract §4.3
+        # option name for this test type; the LabOS word is "cyclic".
+        **attempts.begin(
+            cyclic_test.trials,
+            test_type="Cycles",
+            test_name=cyclic_test.airtable_section_name,
+        ),
     )
 
     db.add(new_trial)
