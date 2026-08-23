@@ -1,7 +1,17 @@
 **/logs
 
-# Alembic database migrations - ignore all version files and database files
-**/alembic/versions/*
+# Alembic database migrations.
+#
+# `startup.sh` runs `command.revision(autogenerate=True)` on EVERY container
+# start and the versions/ directory is bind-mounted from the node, so production
+# accumulates one empty no-op migration per restart (28 of them as of
+# 2026-08-23). Those are build artifacts and stay ignored.
+#
+# Hand-written migrations are NOT artifacts. They are reviewed code, and while
+# this pattern ignored the whole directory they could not reach production
+# through git at all — which is why the repo carried no migrations while the
+# node carried 29.
+**/alembic/versions/*_auto_generated_migration.py
 **/alembic/*.db
 **/alembic/*.sqlite
 **/alembic/*.sqlite3
@@ -13,8 +23,18 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Alembic database migrations - ignore all version files and database files
-**/alembic/versions/*
+# Alembic database migrations.
+#
+# `startup.sh` runs `command.revision(autogenerate=True)` on EVERY container
+# start and the versions/ directory is bind-mounted from the node, so production
+# accumulates one empty no-op migration per restart (28 of them as of
+# 2026-08-23). Those are build artifacts and stay ignored.
+#
+# Hand-written migrations are NOT artifacts. They are reviewed code, and while
+# this pattern ignored the whole directory they could not reach production
+# through git at all — which is why the repo carried no migrations while the
+# node carried 29.
+**/alembic/versions/*_auto_generated_migration.py
 **/alembic/*.db
 **/alembic/*.sqlite
 **/alembic/*.sqlite3
