@@ -10,7 +10,7 @@ This is the last verification step before the sync worker is built. It proves th
 guarantee the whole integration rests on: **a retried write can never duplicate a
 test result.**
 
-Origin: `labos-airtable-verification-report-2026-07-29.md` §4 stage 3 described
+Origin: `docs/labos-airtable/correspondence/verification-report-2026-07-29.md` §4 stage 3 described
 fourteen checks against a payload that is now retired — it targeted the sandbox
 `appYBTqIL43pmS0xN`, the table name `LabOS Raw Test Results`, and the field pair
 `Testing Start Date` / `Testing End Date`, none of which exist any more. The

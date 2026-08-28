@@ -15,7 +15,7 @@ _TRUE = {"1", "true", "yes", "on"}
 
 # ---------------------------------------------------------------- Airtable IDs
 # From the Airtable team's "API Integration Guide v2" (2026-08-17), recorded in
-# ifet-firmware/docs/labos-airtable-write-contract-v0.3.md §0.1.
+# ifet-firmware/docs/labos-airtable/contract/write-contract-v0.3.md §0.1.
 #
 # These are DEFAULTS and cross-checks, not gospel: v2 itself says to confirm the
 # live IDs against the schema endpoint before any production cutover. That is

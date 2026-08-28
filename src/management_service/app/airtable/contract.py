@@ -1,6 +1,6 @@
 """Write contract v0.3 §4, as data.
 
-The prose contract lives in `ifet-firmware/docs/labos-airtable-write-contract-v0.3.md`.
+The prose contract lives in `ifet-firmware/docs/labos-airtable/contract/write-contract-v0.3.md`.
 This module is the machine-checkable half: the probe diffs the live Airtable
 schema against it, and the payload builder validates against it. Keeping one
 copy in code and one in prose is a drift risk, so the rule is the same as for
