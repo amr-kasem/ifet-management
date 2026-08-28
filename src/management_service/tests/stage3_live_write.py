@@ -107,6 +107,23 @@ def probe_values(attempt_id, test_id, *, started, ended):
         "Unit": "PSF",
         "Max Pressure Achieved": 62.5,
         "Deflection Value": 0.42,
+        # Deliberately OUR vocabulary, not theirs, and this is not an oversight.
+        #
+        # Their sample row recxZWiVa5Wuy0ZV6 (2026-08-10) writes "Inches" here.
+        # The live field is singleLineText, so Airtable would accept either and
+        # leave two spellings of one unit in one column, silently. Contract
+        # §10.24 asks them to settle it.
+        #
+        # We do not pre-empt that answer, for two reasons. Their row is a hand
+        # written sample, not necessarily a considered vocabulary; and switching
+        # only this field to "Inches" would leave `Unit` accepting "in" while
+        # `Deflection Unit` required "Inches" -- internally inconsistent, which
+        # is worse than being consistently different from them.
+        #
+        # It is safe to leave as-is because probe rows are tagged LABOS-PROBE and
+        # are purged. What must NOT happen is a real sync starting before §10.24
+        # is answered: `envelope.build` refuses "Inches" outright (verified), so
+        # their current spelling is not merely untidy, it is unsendable.
         "Deflection Unit": "in",
         "Required Value": 60.0,
         "Required Unit": "PSF",
