@@ -45,6 +45,7 @@ services:
       - "8084:8084"
     volumes:
       - ./deployment/config/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - mosquitto_data:/mosquitto/data
     restart: always
     logging:
       driver: json-file
@@ -173,4 +174,6 @@ volumes:
   postgres_data:
     driver: local
   pgadmin_data:
+    driver: local
+  mosquitto_data:
     driver: local
