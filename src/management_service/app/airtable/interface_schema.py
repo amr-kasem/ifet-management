@@ -100,6 +100,13 @@ def build(live, register):
             use, direction = "write", "OUT"
         elif r["direction"] == "IN":
             use, direction = "read", "IN"
+        elif r["direction"] == "IGNORED":
+            # The field exists in the base and we deliberately do not read it.
+            # Distinct from a field absent from the register, which is ignored
+            # because nobody ever considered it: an IGNORED row keeps the reason
+            # in `rule`. Both surface as labos_use=ignore, because that is the
+            # truth about the interface.
+            use, direction = "ignore", "IGNORED"
         else:
             use, direction = "read-only", r["direction"]
 
