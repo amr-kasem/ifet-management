@@ -88,6 +88,54 @@ services:
         max-file: "3"
 
 
+  # The sync worker — delivery plan DG6, deployment half.
+  #
+  # Deliberately spare, and each absence is a decision:
+  #   · no `ports` — it serves nothing. Liveness is the `worker_heartbeat_at` row
+  #     that report-api already exposes on GET /sync/status. A worker answering
+  #     its own health check would report healthy from inside a process whose
+  #     database connection had gone.
+  #   · no volumes except the bind-mounted app, matching report-api, so a Python
+  #     change is live without a rebuild.
+  #   · no `deploy.replicas` — exactly ONE worker, and it is enforced rather than
+  #     assumed: app/sync/singleton.py takes a Postgres advisory lock and a second
+  #     instance exits rather than racing. Raising the replica count here does not
+  #     get you two workers, it gets you one worker and one container in a crash
+  #     loop, which is the intended outcome.
+  #
+  # It starts disabled. AIRTABLE_SYNC_ENABLED=false makes it exit cleanly with a
+  # log line instead of draining a queue nobody has approved sending yet.
+  sync-worker:
+    build: ./src/management_service/
+    command: ["python", "-m", "app.sync.service"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL in .env (see .env.example)}
+      AIRTABLE_TOKEN: ${AIRTABLE_TOKEN:-}
+      AIRTABLE_BASE_ID: ${AIRTABLE_BASE_ID:-}
+      AIRTABLE_RESULTS_TABLE: ${AIRTABLE_RESULTS_TABLE:-tblnc9SsbXU0C0FWh}
+      AIRTABLE_WRITE_ALLOWLIST: ${AIRTABLE_WRITE_ALLOWLIST:-tblnc9SsbXU0C0FWh}
+      AIRTABLE_SYNC_ENABLED: ${AIRTABLE_SYNC_ENABLED:-false}
+      AIRTABLE_ALLOW_PRODUCTION_WRITE: ${AIRTABLE_ALLOW_PRODUCTION_WRITE:-false}
+      LABOS_PUBLIC_ORIGIN: ${LABOS_PUBLIC_ORIGIN:-}
+      SYNC_LOG_LEVEL: ${SYNC_LOG_LEVEL:-INFO}
+    depends_on:
+      - db
+    volumes:
+      - ./src/management_service/app:/app/app
+    # `on-failure`, not `always`. The worker distinguishes two kinds of stop:
+    #   exit 0  - deliberately off (no token, or AIRTABLE_SYNC_ENABLED=false).
+    #             Valid states, so the container stops once, quietly, and the one
+    #             log line explaining why stays readable.
+    #   exit >0 - a real fault: no DATABASE_URL, or another instance already
+    #             holds the worker slot. Worth retrying a bounded number of times.
+    # `always` would restart the deliberate cases too, burying the explanation.
+    restart: on-failure:5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   sick_gateway-1:
     build:
       context: ./src/sick_gateway

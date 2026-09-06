@@ -123,18 +123,27 @@ def main(argv=None):                                        # pragma: no cover
     from ..airtable.client import AirtableClient
     from ..config import airtable_settings
 
+    # A misconfiguration, unlike the two below: something intended to run cannot.
+    # Non-zero, so the restart policy retries it - a compose ordering problem or
+    # a missing .env entry is worth retrying a few times.
     database_url = os.environ.get("DATABASE_URL")
     if not database_url:
         log.error("DATABASE_URL is not set; refusing to guess a database")
         return 2
+    # The two "deliberately off" states exit **0**, and that is the whole point.
+    #
+    # Both are valid: the stack must start before the Airtable team issues a
+    # token, and sync stays dark until the round-trip is approved. Exiting
+    # non-zero would make `restart: on-failure` restart the container five times
+    # over, burying the single log line that explains why it is not running -
+    # the exact failure mode the restart policy exists to avoid. A container that
+    # has correctly decided it has nothing to do should stop, once, quietly.
     if not airtable_settings.is_configured:
-        # Not an error: the stack has to start before the Airtable team issues a
-        # token. Exit clearly rather than looping on a queue it cannot drain.
-        log.error("Airtable is not configured (token/base/table); nothing to do")
-        return 3
+        log.info("Airtable is not configured (token/base/table); nothing to do")
+        return 0
     if not airtable_settings.sync_enabled:
-        log.error("AIRTABLE_SYNC_ENABLED is not true; the worker stays off")
-        return 4
+        log.info("AIRTABLE_SYNC_ENABLED is not true; the worker stays off")
+        return 0
 
     engine = create_engine(database_url, pool_pre_ping=True)
     session_factory = sessionmaker(autocommit=False, autoflush=False, bind=engine)
