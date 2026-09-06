@@ -19,12 +19,22 @@ from sqlalchemy import Column, DateTime, Integer, String, Text
 from ..data.models import Base
 from . import outbox
 
-# LED states, design package §5.1.
+# LED states, design package §5.1. Retained because the deployed browser bundle
+# reads `led`; removing it would break the existing UI.
 LED_GREEN = "green"      # healthy, nothing waiting
 LED_AMBER = "amber"      # work queued - testing continues normally
 LED_RED = "red"          # worker stale, or last cycle failed
 # The spinner is not produced here: it is what the browser shows when report-api
 # itself does not answer, which is the only real "cannot fetch".
+
+# The contractual vocabulary - write-contract §7. These four words are what the
+# Airtable team asked for and what the operator's status chip must show, so they
+# are served alongside `led` rather than instead of it. `led` is a colour for a
+# lamp; these are the states we owe an answer in.
+SYNC_SYNCED = "Synced"                  # nothing open, nothing failed
+SYNC_PENDING = "Pending"                # queued; testing continues normally
+SYNC_FAILED = "Sync Failed"             # a cycle errored, or the worker is gone
+SYNC_RETRY_REQUIRED = "Retry Required"  # parked - it needs a human, not time
 
 DEFAULT_HEARTBEAT_TIMEOUT = 180
 
@@ -87,6 +97,8 @@ def status(session, now=None, heartbeat_timeout=DEFAULT_HEARTBEAT_TIMEOUT):
     push_err = state.last_push_error if state else None
     pull_err = state.last_pull_error if state else None
 
+    attachments = outbox.attachment_backlog(session)
+
     if not worker_alive or parked or push_err or pull_err:
         led = LED_RED
     elif depth:
@@ -94,8 +106,22 @@ def status(session, now=None, heartbeat_timeout=DEFAULT_HEARTBEAT_TIMEOUT):
     else:
         led = LED_GREEN
 
+    # Ordered by what the operator must do about it, most actionable first.
+    # `parked` outranks a transient error because it will never clear on its
+    # own, and both outrank a queue that is merely draining.
+    if parked:
+        sync_status = SYNC_RETRY_REQUIRED
+    elif not worker_alive or push_err or pull_err:
+        sync_status = SYNC_FAILED
+    elif depth or attachments:
+        sync_status = SYNC_PENDING
+    else:
+        sync_status = SYNC_SYNCED
+
     return {
         "led": led,
+        "status": sync_status,
+        "attachment_backlog": attachments,
         "worker_alive": worker_alive,
         "heartbeat_age_seconds": beat_age,
         "queue_depth": depth,

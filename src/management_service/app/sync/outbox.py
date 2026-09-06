@@ -32,7 +32,9 @@ import datetime as dt
 from sqlalchemy import (
     Column, DateTime, Integer, JSON, String, Text, UniqueConstraint, func,
 )
+from sqlalchemy.exc import IntegrityError
 
+from ..airtable.client import request_budget_seconds
 from ..data.models import Base
 
 # --- entry states ----------------------------------------------------------
@@ -50,10 +52,26 @@ VERDICT = "verdict"
 ATTACHMENT = "attachment"
 
 DEFAULT_MAX_ATTEMPTS = 8
-# How long a worker may hold an entry before another worker may take it. Bounds
-# how long a crash mid-push stalls one attempt; it does not risk a double send,
-# because delivery upserts on `LabOS Attempt ID`.
-DEFAULT_LEASE_SECONDS = 120
+
+# How many times `enqueue` will retry a colliding sequence allocation before
+# giving up. Each retry is one lost race against a concurrent enqueue for the
+# same attempt; more than a couple means something else is wrong.
+ENQUEUE_MAX_RETRIES = 5
+
+# How long a worker may hold an entry before another worker may take it.
+#
+# **This is one decision with the client's retry budget, not two.** A lease
+# shorter than the worst case a single send can legitimately take means a
+# still-working worker gets its entry stolen: two workers then send the same
+# phase, and while the upsert prevents a duplicate *row*, the loser can still
+# record a stale outcome over the winner's. That is what `owner_epoch` fences,
+# but the lease should not create the race in the first place.
+#
+# So it is derived, with margin, from `client.request_budget_seconds()`. The
+# previous hard-coded 120 was **shorter than the client's own worst case of
+# ~168 s**, which is exactly the bug.
+LEASE_SAFETY_FACTOR = 1.5
+DEFAULT_LEASE_SECONDS = int(request_budget_seconds() * LEASE_SAFETY_FACTOR) + 1
 
 
 def _now():
@@ -96,6 +114,12 @@ class SyncOutbox(Base):
     attempts = Column(Integer, nullable=False, default=0)
     next_attempt_at = Column(DateTime(timezone=True), nullable=True)
     leased_until = Column(DateTime(timezone=True), nullable=True)
+    # Fencing token. Bumped on every claim, so a worker holds the epoch it was
+    # given and any outcome carrying an older epoch is **discarded, not
+    # recorded**. Without it, a worker whose lease expired mid-send can land a
+    # stale `terminal` on top of an already-reviewed verdict: the upsert stops a
+    # duplicate row, never a stale last write.
+    owner_epoch = Column(Integer, nullable=False, default=0)
     last_error = Column(Text, nullable=True)
 
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
@@ -127,32 +151,103 @@ class Superseded(Exception):
     """Raised internally when an entry is older than what Airtable already has."""
 
 
-def enqueue(session, attempt_id, phase, payload, payload_updated_at=None):
+def enqueue(session, attempt_id, phase, payload, payload_updated_at=None,
+            _max_retries=ENQUEUE_MAX_RETRIES, _after_read=None):
     """Add one phase write to `attempt_id`'s queue.
 
     **Does not commit.** That is the whole point: the caller commits this in the
     same transaction as the attempt row, so a result and its intent to sync are
     atomic. A caller that commits them separately has reintroduced the failure
     mode this module exists to remove.
+
+    Sequence allocation is `max(seq)+1` **inside a savepoint, retried on
+    collision**. Read-then-insert without the savepoint is the deviation this
+    replaces: two concurrent enqueues for one attempt computed the same number,
+    and the loser's unique-constraint violation aborted the caller's whole
+    transaction - failing the operator's save to protect a queue whose entire
+    purpose is that the save never fails.
     """
-    next_seq = (session.query(func.coalesce(func.max(SyncOutbox.attempt_seq), 0))
-                .filter(SyncOutbox.attempt_id == attempt_id)
-                .scalar()) + 1
-    entry = SyncOutbox(
-        attempt_id=attempt_id,
-        attempt_seq=next_seq,
-        phase=phase,
-        payload=payload,
-        payload_updated_at=payload_updated_at,
-        state=PENDING,
-        attempts=0,
-        # NULL, not now(): a fresh entry has no backoff to wait out, and
-        # stamping it with wall-clock would make eligibility depend on clock
-        # skew between whoever enqueued and whoever claims.
-        next_attempt_at=None,
-    )
-    session.add(entry)
-    return entry
+    # The savepoint retry is a Postgres mechanism, and only Postgres gets it.
+    #
+    # On SQLite it is not merely unnecessary - it is *harmful*. pysqlite does not
+    # open a transaction the way SQLAlchemy's SAVEPOINT support needs, so
+    # `begin_nested()` + `flush()` commits the INSERT then and there. The
+    # enqueue would survive the caller rolling back, which breaks the one
+    # guarantee this module exists to provide: the entry and the attempt row
+    # land together or not at all. Verified 2026-09-06 - the row outlived a
+    # `session.rollback()`.
+    #
+    # Nothing is lost by skipping it. SQLite has a single writer, so there is no
+    # concurrent enqueue to collide with, and `max(seq)+1` is safe: the pending
+    # object is flushed by the next query's autoflush, so a second enqueue in
+    # the same session sees the first.
+    if session.bind is None or session.bind.dialect.name != "postgresql":
+        next_seq = (session.query(func.coalesce(func.max(SyncOutbox.attempt_seq), 0))
+                    .filter(SyncOutbox.attempt_id == attempt_id)
+                    .scalar()) + 1
+        entry = SyncOutbox(
+            attempt_id=attempt_id,
+            attempt_seq=next_seq,
+            phase=phase,
+            payload=payload,
+            payload_updated_at=payload_updated_at,
+            state=PENDING,
+            attempts=0,
+            owner_epoch=0,
+            next_attempt_at=None,
+        )
+        if _after_read is not None:
+            _after_read(next_seq)
+        session.add(entry)
+        return entry
+
+    last_error = None
+    for _ in range(_max_retries):
+        next_seq = (session.query(func.coalesce(func.max(SyncOutbox.attempt_seq), 0))
+                    .filter(SyncOutbox.attempt_id == attempt_id)
+                    .scalar()) + 1
+        entry = SyncOutbox(
+            attempt_id=attempt_id,
+            attempt_seq=next_seq,
+            phase=phase,
+            payload=payload,
+            payload_updated_at=payload_updated_at,
+            state=PENDING,
+            attempts=0,
+            owner_epoch=0,
+            # NULL, not now(): a fresh entry has no backoff to wait out, and
+            # stamping it with wall-clock would make eligibility depend on clock
+            # skew between whoever enqueued and whoever claims.
+            next_attempt_at=None,
+        )
+        if _after_read is not None:
+            # Test seam. The collision this retry loop exists for needs both
+            # callers to have read `max(seq)` before either inserts, and hoping
+            # for that timing window makes a flaky test rather than a proof. The
+            # concurrency suite passes a barrier here. Production passes None.
+            _after_read(next_seq)
+
+        try:
+            # A SAVEPOINT, so that losing the race rolls back **this insert
+            # only** and leaves the caller's transaction - the domain save -
+            # untouched and committable. Without it, the unique-constraint
+            # violation aborts the whole transaction and the operator's save
+            # fails because two phases of one attempt were enqueued at once.
+            # That would invert the reason this module exists.
+            with session.begin_nested():
+                session.add(entry)
+                session.flush()
+        except IntegrityError as exc:
+            last_error = exc
+            if entry in session:
+                session.expunge(entry)
+            continue
+        return entry
+
+    raise RuntimeError(
+        f"could not allocate an outbox sequence for attempt {attempt_id} after "
+        f"{_max_retries} attempts"
+    ) from last_error
 
 
 def _head_ids(session):
@@ -178,11 +273,24 @@ def claim(session, limit=10, now=None, lease_seconds=DEFAULT_LEASE_SECONDS):
     """
     now = now or _now()
     heads = _head_ids(session)
-    rows = (session.query(SyncOutbox)
-            .join(heads, (SyncOutbox.attempt_id == heads.c.aid)
-                  & (SyncOutbox.attempt_seq == heads.c.seq))
-            .order_by(SyncOutbox.attempt_id, SyncOutbox.attempt_seq)
-            .all())
+    query = (session.query(SyncOutbox)
+             .join(heads, (SyncOutbox.attempt_id == heads.c.aid)
+                   & (SyncOutbox.attempt_seq == heads.c.seq))
+             .order_by(SyncOutbox.attempt_id, SyncOutbox.attempt_seq))
+
+    # `SELECT ... FOR UPDATE OF sync_outbox SKIP LOCKED` - exclusive ownership
+    # enforced by the database, not by deploying exactly one worker. SKIP LOCKED
+    # rather than NOWAIT so a second worker takes different work instead of
+    # erroring, and `of=` so only the outbox rows are locked and not the
+    # head-computing subquery.
+    #
+    # SQLite ignores the locking clause, which is precisely why these guarantees
+    # are only meaningful under the Postgres harness in
+    # `tests/postgres_harness/`.
+    if session.bind is not None and session.bind.dialect.name == "postgresql":
+        query = query.with_for_update(of=SyncOutbox, skip_locked=True)
+
+    rows = query.all()
 
     claimed = []
     for row in rows:
@@ -196,9 +304,39 @@ def claim(session, limit=10, now=None, lease_seconds=DEFAULT_LEASE_SECONDS):
             continue                      # backing off
         row.state = INFLIGHT
         row.leased_until = now + dt.timedelta(seconds=lease_seconds)
+        # Every claim is a new epoch, including a claim of an expired lease. The
+        # previous holder's epoch is now stale and its outcome will be discarded.
+        row.owner_epoch = (row.owner_epoch or 0) + 1
         row.updated_at = now
         claimed.append(row)
     return claimed
+
+
+def owns(session, entry, epoch):
+    """Does `epoch` still hold this entry?
+
+    Read straight from the database rather than from the ORM object, because the
+    object is what the caller has been holding across a slow network send and is
+    exactly what may be stale.
+    """
+    row = (session.query(SyncOutbox.owner_epoch)
+           .filter(SyncOutbox.id == entry.id).one_or_none())
+    return row is not None and row[0] == epoch
+
+
+def reassert_lease(session, entry, epoch, now=None, lease_seconds=DEFAULT_LEASE_SECONDS):
+    """Extend the lease immediately before a send. False means we lost it.
+
+    Called **per send, not per batch**. A batch-stamped lease is a lease that
+    expires while the ninth entry is still waiting behind eight slow sends, so
+    another worker takes it while this one is about to send it too.
+    """
+    now = now or _now()
+    if not owns(session, entry, epoch):
+        return False
+    entry.leased_until = now + dt.timedelta(seconds=lease_seconds)
+    entry.updated_at = now
+    return True
 
 
 def is_superseded(session, entry):
@@ -287,6 +425,18 @@ def queue_depth(session):
     """
     return (session.query(func.count(SyncOutbox.id))
             .filter(SyncOutbox.state.in_(OPEN_STATES)).scalar()) or 0
+
+
+def attachment_backlog(session):
+    """Open entries on the attachment channel.
+
+    Tracked separately because §6 runs attachments as their own channel: an
+    attempt can be fully delivered while its photographs are still queued, and
+    a status that said "Synced" then would be lying about the evidence.
+    """
+    return (session.query(func.count(SyncOutbox.id))
+            .filter(SyncOutbox.phase == ATTACHMENT,
+                    SyncOutbox.state.in_(OPEN_STATES)).scalar()) or 0
 
 
 def parked_count(session):

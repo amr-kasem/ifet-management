@@ -36,7 +36,8 @@ def _now():
 class Result:
     """What one cycle did. Returned rather than logged so tests can assert."""
 
-    __slots__ = ("delivered", "superseded", "failed", "parked", "claimed")
+    __slots__ = ("delivered", "superseded", "failed", "parked", "claimed",
+                 "discarded")
 
     def __init__(self):
         self.delivered = 0
@@ -44,11 +45,15 @@ class Result:
         self.failed = 0
         self.parked = 0
         self.claimed = 0
+        # Outcomes thrown away because the lease was lost mid-send. Counted
+        # rather than logged, because "we sent and then discarded the result"
+        # is a thing an operator may need to see.
+        self.discarded = 0
 
     def __repr__(self):
         return (f"Result(claimed={self.claimed} delivered={self.delivered} "
                 f"superseded={self.superseded} failed={self.failed} "
-                f"parked={self.parked})")
+                f"parked={self.parked} discarded={self.discarded})")
 
 
 def run_cycle(session, send, *, limit=10, now=None,
@@ -72,21 +77,41 @@ def run_cycle(session, send, *, limit=10, now=None,
         session.commit()
 
     for entry in claimed:
+        # The epoch this worker was granted. Every outcome below is only
+        # recorded if the row still carries it.
+        epoch = entry.owner_epoch
+
         if outbox.is_superseded(session, entry):
             # Not an error: a duplicate of something Airtable already has, or
             # older than what it holds. Closing it is the correct outcome.
             outbox.mark_done(session, entry, now=now)
             result.superseded += 1
             continue
+
+        # Re-assert immediately before *this* send, not once for the batch: by
+        # the time a slow batch reaches its last entry, a batch-stamped lease
+        # may already have expired and been taken by another worker.
+        if not outbox.reassert_lease(session, entry, epoch, now=now):
+            result.discarded += 1
+            continue
+        if commit:
+            session.commit()
+
         try:
             record_id = send(entry)
         except TERMINAL_ERRORS as exc:
+            if not outbox.owns(session, entry, epoch):
+                result.discarded += 1
+                continue
             outbox.mark_failed(session, entry, exc, now=now,
                                max_attempts=1)   # park on the first occurrence
             result.failed += 1
             result.parked += 1
             _record_push_error(session, exc, now)
         except (AirtableError, Exception) as exc:      # noqa: B014 - breadth is deliberate
+            if not outbox.owns(session, entry, epoch):
+                result.discarded += 1
+                continue
             outbox.mark_failed(session, entry, exc, now=now,
                                max_attempts=max_attempts)
             result.failed += 1
@@ -94,6 +119,14 @@ def run_cycle(session, send, *, limit=10, now=None,
                 result.parked += 1
             _record_push_error(session, exc, now)
         else:
+            # The fence, on the success path too - and this is the case that
+            # matters most. A worker whose lease expired mid-send, whose entry
+            # was re-claimed and whose attempt has since been reviewed, must not
+            # write its stale outcome over the verdict. Upsert prevents a
+            # duplicate row; it does nothing about a stale last write.
+            if not outbox.owns(session, entry, epoch):
+                result.discarded += 1
+                continue
             outbox.mark_done(session, entry, airtable_record_id=record_id, now=now)
             result.delivered += 1
             st = sync_state.get_or_create(session)
@@ -127,6 +160,7 @@ def drain(session, send, *, max_cycles=100, **kwargs):
         total.superseded += cycle.superseded
         total.failed += cycle.failed
         total.parked += cycle.parked
+        total.discarded += cycle.discarded
         if cycle.claimed == 0:
             break
     return total

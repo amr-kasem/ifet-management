@@ -45,6 +45,28 @@ MAX_BATCH = 10
 
 DEFAULT_TIMEOUT = 30
 
+# Retries per request. Named, because the outbox lease is derived from it: the
+# two must never drift apart. See `request_budget_seconds`.
+MAX_REQUEST_ATTEMPTS = 5
+
+
+def request_budget_seconds(max_attempts=None, timeout=DEFAULT_TIMEOUT):
+    """Worst-case wall clock for one `request()` call, in seconds.
+
+    The outbox lease is computed from this, so that "how long may a worker hold
+    an entry" and "how long may one send legitimately take" are a single
+    decision rather than two numbers that quietly disagree. With the defaults
+    this is ~168 s, which is why a 120 s lease was wrong.
+
+    Counts every attempt's socket timeout, every inter-attempt backoff at its
+    ceiling including maximum jitter, and the inter-request throttle.
+    """
+    max_attempts = MAX_REQUEST_ATTEMPTS if max_attempts is None else max_attempts
+    sockets = timeout * max_attempts
+    backoff = sum(min(2 ** (a - 1), 30) + 0.5 for a in range(1, max_attempts))
+    throttle = MIN_REQUEST_INTERVAL * max_attempts
+    return sockets + backoff + throttle
+
 
 class AirtableClient:
     """Thin, explicit Airtable client. One instance per process is plenty."""
@@ -96,7 +118,7 @@ class AirtableClient:
 
     # ----------------------------------------------------------- the request
 
-    def request(self, method, url, payload=None, max_attempts=5):
+    def request(self, method, url, payload=None, max_attempts=MAX_REQUEST_ATTEMPTS):
         """One Airtable call, with throttling and typed retries.
 
         Retries only what §8 says is retryable: 429, 5xx, and transport
