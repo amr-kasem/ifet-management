@@ -1,4 +1,4 @@
-"""Outbox and offline-recovery tests — synthetic fixtures, no network, no Postgres.
+"""Outbox and offline-recovery tests — synthetic fixtures, no network.
 
 These cover the acceptance cases the design package calls B (offline
 resilience) and C′ (per-attempt delivery ordering). They are the ones that would
@@ -6,9 +6,14 @@ let a real defect reach a customer: a lost result, a verdict delivered ahead of
 the measurements behind it, or a queue that stalls the whole lab because one
 record is bad.
 
-Everything runs against SQLite in memory, so the SQL is real but the test is
-offline and takes milliseconds. The Airtable side is a `Transport` object that
-can be told to fail, to lose a response after succeeding, or to recover.
+By default everything runs against SQLite in memory, so the SQL is real but the
+test is offline and takes milliseconds. Set `M2_DATABASE_URL` and the identical
+cases run against the Postgres major production runs - see
+`tests/postgres_harness/`. The concurrency guarantees that SQLite cannot express
+at all live in `test_sync_concurrency.py`.
+
+The Airtable side is a `Transport` object that can be told to fail, to lose a
+response after succeeding, or to recover.
 
 The rest of the suite is stdlib-only and runs anywhere. This module cannot be:
 the outbox *is* database behaviour, and testing it against a fake would test the
@@ -20,16 +25,17 @@ import datetime as dt
 import unittest
 
 try:
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy import create_engine  # noqa: F401 - kept for the SQLite path
+    from sqlalchemy.orm import sessionmaker  # noqa: F401
 except ImportError as exc:                                  # pragma: no cover
     raise unittest.SkipTest(f"sqlalchemy not installed: {exc}") from exc
 
 from app.airtable.errors import (
     AirtableAuthError, AirtableServerError, AirtableTransportError,
 )
-from app.data.models import Base
+from app.data.models import Base  # noqa: F401 - used via pg_support
 from app.sync import outbox, state as sync_state, worker
+from tests import pg_support
 
 T0 = dt.datetime(2026, 9, 5, 12, 0, 0, tzinfo=dt.timezone.utc)
 
@@ -67,14 +73,26 @@ def lost(exc):
 
 
 class Base_(unittest.TestCase):
+    """Runs on SQLite by default, on Postgres when `M2_DATABASE_URL` is set.
+
+    The same 23 cases either way - the point of the switch is that the SQL these
+    exercise is then the SQL production runs, on the version production runs.
+    """
+
     def setUp(self):
-        self.engine = create_engine("sqlite://")
-        Base.metadata.create_all(self.engine)
-        self.Session = sessionmaker(bind=self.engine)
+        self.engine = pg_support.make_engine()
+        pg_support.prepare(self.engine)
+        self.Session = pg_support.session_factory(self.engine)
         self.session = self.Session()
 
     def tearDown(self):
         self.session.close()
+        if pg_support.is_postgres():
+            # Only on Postgres. Disposing an in-memory SQLite engine closes the
+            # single shared connection *and the database with it*, which then
+            # breaks any `addCleanup(session.close)` a test registered - those
+            # run after tearDown.
+            self.engine.dispose()
 
     def enqueue(self, attempt_id, phase, updated_at=None, **payload):
         entry = outbox.enqueue(
@@ -107,12 +125,24 @@ class Enqueue(Base_):
         self.assertEqual(rows, {"A": 1, "B": 1})
 
     def test_enqueue_does_not_commit(self):
-        """The caller commits, in the same transaction as the attempt row."""
+        """The caller commits, in the same transaction as the attempt row.
+
+        Asserted by rolling back rather than by peeking from a second session.
+        `enqueue` now flushes inside a savepoint to allocate its sequence, so
+        "not yet flushed" and "not committed" are no longer the same thing - and
+        in-memory SQLite hands every session the *same* connection, where a
+        flushed-but-uncommitted row is visible and the peek proves nothing.
+        Rollback tests the actual guarantee on every backend.
+        """
         outbox.enqueue(self.session, "A", outbox.CREATE, {"x": 1})
+        self.session.rollback()
+        self.assertEqual(outbox.queue_depth(self.session), 0,
+                         "a rolled-back caller must take its queue entry with it")
+
+        outbox.enqueue(self.session, "A", outbox.CREATE, {"x": 1})
+        self.session.commit()
         other = self.Session()
         self.addCleanup(other.close)
-        self.assertEqual(outbox.queue_depth(other), 0)
-        self.session.commit()
         self.assertEqual(outbox.queue_depth(other), 1)
 
 

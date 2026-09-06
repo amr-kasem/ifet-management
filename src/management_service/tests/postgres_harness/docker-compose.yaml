@@ -1,0 +1,62 @@
+# M2 — the disposable PostgreSQL harness.
+#
+# Every §7 guarantee in the delivery plan is invisible in SQLite: SKIP LOCKED is a
+# no-op, two connections cannot contend, and a savepoint retry has nothing to race.
+# So the outbox tests run here, against a real Postgres, on separate connections,
+# in separate processes.
+#
+# Disposable by construction: `down -v` removes the volume, and nothing here shares
+# a port, a name or a network with anything real. Postgres is published on
+# 127.0.0.1:15432 - never 5432.
+#
+#   docker compose -f src/management_service/tests/postgres_harness/docker-compose.yaml up -d
+#   docker compose -f src/management_service/tests/postgres_harness/docker-compose.yaml run --rm tests
+#   docker compose -f src/management_service/tests/postgres_harness/docker-compose.yaml down -v
+
+name: ifet-m2-harness
+
+services:
+  postgres:
+    # postgres:13, because that is what production runs (compose.yaml). A harness on
+    # a newer major would prove guarantees against a planner and a lock manager the
+    # node does not have.
+    image: postgres:13
+    environment:
+      POSTGRES_USER: m2
+      POSTGRES_PASSWORD: m2-throwaway-not-a-secret
+      POSTGRES_DB: m2
+    ports:
+      - "127.0.0.1:15432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U m2 -d m2"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks: [m2]
+    tmpfs:
+      # No durable volume at all: a harness that survives a reboot is a harness
+      # someone will eventually mistake for a real database. (This is the pg13
+      # data-dir convention; pg18 moved it up to /var/lib/postgresql.)
+      - /var/lib/postgresql/data
+    command: >
+      postgres -c fsync=off -c full_page_writes=off -c synchronous_commit=off
+
+  tests:
+    build: .
+    environment:
+      M2_DATABASE_URL: postgresql+psycopg2://m2:m2-throwaway-not-a-secret@postgres:5432/m2
+    volumes:
+      - ../../:/app:ro
+    working_dir: /app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [m2]
+    # Only ever run explicitly, via `run --rm tests`. Without this, `up -d` also
+    # starts a long-lived container running the whole suite, which then holds
+    # transactions open and every later run blocks behind its TRUNCATE.
+    profiles: [tests]
+
+networks:
+  m2:
+    driver: bridge
