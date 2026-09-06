@@ -35,8 +35,9 @@ class AgainstTheV2Base(unittest.TestCase):
             self.assertIn(table_id, self.text)
         self.assertEqual(self.rep.failures, 0, self.text)
 
-    def test_every_field_v2_promised_is_found(self):
-        self.assertIn("all 28 fields promised by v2 are present", self.text)
+    def test_every_field_the_contract_expects_is_found(self):
+        """35 now, not the 28 v2 published: the base moved twice past the guide."""
+        self.assertIn(f"all {len(C.EXPECTED_LIVE)} fields the contract expects are present", self.text)
 
     def test_catches_the_Passed_vs_Pass_option_mismatch(self):
         """§10.16 — the landmine in their own worked example."""
@@ -55,17 +56,31 @@ class AgainstTheV2Base(unittest.TestCase):
     def test_reports_the_impact_result_shape(self):
         self.assertIn("§10.5", self.rep.answers)
 
-    def test_flags_the_two_blocking_absent_fields(self):
-        for name in C.BLOCKING_ABSENT:
-            self.assertIn(f"{name!r} still absent", self.text)
-        self.assertIn("BLOCKING", self.text)
+    def test_nothing_is_blocking_any_more(self):
+        """Both former blockers were applied 2026-09-06.
+
+        Asserted as an empty set rather than deleted, because "nothing we need
+        is missing" is a claim worth failing on if it stops being true.
+        """
+        self.assertEqual(C.BLOCKING_ABSENT, ())
+        self.assertNotIn("BLOCKING", self.text)
 
     def test_says_plainly_that_it_cannot_close_the_read_side_item(self):
         self.assertIn("A probe CANNOT close §10.3", self.text)
 
-    def test_read_side_free_text_is_not_mistaken_for_structure(self):
-        """Protocol Sections has only a long-text 'Requirements' field."""
-        self.assertIn("none of the parameter fields contract §9.1 asks for exist", self.text)
+    def test_the_read_side_is_now_structured(self):
+        """The typed fields landed, so the probe should say so."""
+        self.assertIn("machine-readable parameter present", self.text)
+        self.assertIn("Requirement Code", self.text)
+
+    def test_free_text_read_side_is_still_not_mistaken_for_structure(self):
+        """The pre-2026-09-06 shape must still be recognised as prose.
+
+        Kept because the check is what protects us if a section ever loses its
+        typed fields - the failure mode is silent otherwise.
+        """
+        _, text = run(FS.schema(section_fields=FS.PROTOCOL_SECTION_FIELDS_FREE_TEXT))
+        self.assertIn("none of the parameter fields contract §9.1 asks for exist", text)
 
 
 class NegativeCases(unittest.TestCase):
@@ -110,16 +125,23 @@ class NegativeCases(unittest.TestCase):
         self.assertIn("link-to-record, not text", text)
 
     def test_correction_fields_being_added_is_reported_as_a_close(self):
-        fields = list(FS.RAW_DATA_FIELDS) + [
-            FS._f("Corrects Attempt ID"), FS._f("Correction Reason", "multilineText")]
-        rep, text = run(FS.schema(raw_fields=fields))
-        self.assertIn("§10.14 can close", text)
+        """Drive the transition from a base that lacks them, since the live one has them."""
+        without = [f for f in FS.RAW_DATA_FIELDS
+                   if f["name"] not in ("Corrects Attempt ID", "Correction Reason")]
+        _, before = run(FS.schema(raw_fields=without))
+        self.assertNotIn("§10.14 can close", before)
+        self.assertIn("still absent", before)
+
+        _, after = run(FS.schema())          # the live shape, both present
+        self.assertIn("§10.14 can close", after)
 
     def test_machine_readable_read_side_is_recognised(self):
-        sections = [FS._f("Design Pressure Inward (PSF)", "number"),
-                    FS._f("Hold Time (s)", "number")]
-        rep, text = run(FS.schema(section_fields=sections))
+        """A9 changed what counts: identity and Requirement Code, not pressures."""
+        sections = [FS._sel("Requirement Code", ["STATIC_PRESSURE", "CYCLIC_PRESSURE"]),
+                    FS._sel("Applicability", ["Required", "Not Required", "Unconfirmed"])]
+        _, text = run(FS.schema(section_fields=sections))
         self.assertIn("machine-readable parameter present", text)
+        self.assertIn("Requirement Code", text)
 
 
 class Snapshot(unittest.TestCase):
@@ -146,9 +168,17 @@ class ContractDataIntegrity(unittest.TestCase):
         names = [f.wire_name for f in C.FIELDS]
         self.assertEqual(len(names), len(set(names)))
 
-    def test_expected_live_matches_the_28_fields_v2_publishes(self):
-        self.assertEqual(len(C.EXPECTED_LIVE), len(FS.RAW_DATA_FIELDS))
-        self.assertEqual(set(C.EXPECTED_LIVE), {f["name"] for f in FS.RAW_DATA_FIELDS})
+    def test_expected_live_is_a_subset_of_the_real_base(self):
+        """Every field the contract expects exists; the base may hold more.
+
+        The one extra is `Raw Modified Time`, an Airtable-computed field they own
+        and we neither read nor write. Named explicitly so a *second* unknown
+        field fails this test instead of hiding behind it.
+        """
+        live = {f["name"] for f in FS.RAW_DATA_FIELDS}
+        self.assertEqual(set(C.EXPECTED_LIVE) - live, set(),
+                         "contract expects a field the base does not have")
+        self.assertEqual(live - set(C.EXPECTED_LIVE), {"Raw Modified Time"})
 
     def test_blocking_absent_are_genuinely_marked_absent(self):
         for name in C.BLOCKING_ABSENT:

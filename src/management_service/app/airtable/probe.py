@@ -112,14 +112,23 @@ def check_raw_table(schema, rep):
     for name in missing:
         rep.fail(f"promised by v2 but MISSING from the base: {name!r}")
     if not missing:
-        rep.ok(f"all {len(C.EXPECTED_LIVE)} fields promised by v2 are present")
+        rep.ok(f"all {len(C.EXPECTED_LIVE)} fields the contract expects are present")
 
-    still_absent = [n for n in C.BLOCKING_ABSENT if n not in fields]
-    for name in still_absent:
+    # §10.14 — the correction pair. Driven by the field names rather than by
+    # C.BLOCKING_ABSENT: that tuple is empty now that both were applied, and
+    # iterating it would silently check nothing. Their absence is already a
+    # failure above, since both are PRESENT in the contract; this adds the
+    # §10.14 verdict on top so the item can be closed from a probe run.
+    correction_pair = ("Corrects Attempt ID", "Correction Reason")
+    absent_pair = [n for n in correction_pair if n not in fields]
+    for name in absent_pair:
         rep.warn(f"{name!r} still absent — contract §10.14, BLOCKING")
+    if not absent_pair:
+        rep.ok("both correction fields present — §10.14 can close")
+
     for name in C.BLOCKING_ABSENT:
-        if name in fields:
-            rep.ok(f"{name!r} has been added — §10.14 can close")
+        if name not in fields:
+            rep.warn(f"{name!r} still absent — BLOCKING")
 
     granted = [n for n in C.REQUESTED_ABSENT if n in fields]
     for name in sorted(granted):

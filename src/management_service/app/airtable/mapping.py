@@ -32,7 +32,14 @@ def owning_test(attempt):
 
 
 def _deflection_value(attempt):
-    """The deflection LabOS reports for this attempt.
+    """Largest gauge reading, unless an explicit column overrides it.
+
+    **Currently unused by `envelope_values`** — A3 quarantines deflection, so
+    nothing publishes this. Kept, with its tests, because milestone M6
+    un-quarantines it once a known displacement has been applied to a gauge and
+    the transform identified end to end. Deleting it would mean rediscovering
+    the derivation later; leaving it wired would mean publishing raw IO-Link
+    counts mislabelled as inches.
 
     Prefer the explicit column: an operator or the pass/fail step may have
     chosen which gauge is authoritative. Fall back to the largest measured
@@ -98,15 +105,31 @@ def envelope_values(attempt, *, strict=True):
         "Abort Reason": attempt.abort_reason,
 
         # -- §4.4 measurements -------------------------------------------------
+        #
+        # Five columns are deliberately NOT emitted here, and their absence is
+        # the decision rather than an oversight:
+        #
+        #   Max Pressure Achieved  A2 - no measurement source exists at all. The
+        #                          rig sends deflections[] and nothing else, and
+        #                          the setpoint is a target. M7.
+        #   Deflection Value/Unit  A3 - raw IO-Link counts mislabelled as inches.
+        #                          Uncalibrated evidence stays local. M6.
+        #
+        # `Required Value` and `Required Unit` are NOT in that list and are still
+        # emitted below: A9 stops LabOS reading requirement values from Airtable,
+        # not publishing the ones its own operator entered. Those are LabOS's
+        # numbers and did not come through the extractor.
+        #
+        # They were emitted until 2026-09-06. The envelope now refuses them in
+        # both the columns and the JSON, so emitting them here would raise rather
+        # than publish - but the honest fix is not to produce them in the first
+        # place. The ORM columns stay: the data is kept locally, it is only
+        # publishing it that is refused.
         "Measured Value": attempt.measured_value,
         "Unit": attempt.unit,
-        "Max Pressure Achieved": attempt.max_pressure_achieved,
-        "Deflection Value": _deflection_value(attempt),
-        "Deflection Unit": attempt.deflection_unit,
         "Impact Result": attempt.impact_result,
         "Required Value": attempt.required_value,
         "Required Unit": attempt.required_unit,
-        "Cycles Required": attempt.cycles_required,
         "Cycles Completed": attempt.cycles_completed,
         "Result Detail (JSON)": attempt.result_detail,
 

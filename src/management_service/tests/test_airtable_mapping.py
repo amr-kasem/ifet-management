@@ -13,6 +13,7 @@ import unittest
 UTC = dt.timezone.utc
 
 from app.airtable import contract as C
+from app.airtable import mapping
 from app.airtable import envelope
 from app.airtable.envelope import EnvelopeError
 from app.airtable.mapping import envelope_values, is_syncable, owning_test
@@ -137,21 +138,37 @@ class Fields(unittest.TestCase):
 
 
 class DeflectionDerivation(unittest.TestCase):
+    """The derivation is parked, not deleted — M6 un-quarantines it (A3).
+
+    Tested directly against the helper rather than through `envelope_values`,
+    because nothing publishes deflection today. Keeping the coverage means M6
+    inherits a derivation that is known to work; deleting it would mean
+    rediscovering it under time pressure with a rig booked.
+    """
+
     def test_explicit_column_wins(self):
         a = attempt(deflection_value=0.31,
                     deflections=[Stub(max_deflection=0.9)])
-        self.assertEqual(envelope_values(a)["Deflection Value"], 0.31)
+        self.assertEqual(mapping._deflection_value(a), 0.31)
 
     def test_falls_back_to_the_largest_gauge_reading(self):
         a = attempt(deflection_value=None,
                     deflections=[Stub(max_deflection=0.21),
                                  Stub(max_deflection=0.44),
                                  Stub(max_deflection=0.08)])
-        self.assertEqual(envelope_values(a)["Deflection Value"], 0.44)
+        self.assertEqual(mapping._deflection_value(a), 0.44)
 
-    def test_no_gauges_means_the_key_is_absent(self):
+    def test_no_gauges_means_no_value(self):
         a = attempt(deflection_value=None, deflections=[])
+        self.assertIsNone(mapping._deflection_value(a))
+
+    def test_deflection_is_not_published(self):
+        """A3, as an executable fact: derivable, and deliberately not sent."""
+        a = attempt(deflection_value=0.31,
+                    deflections=[Stub(max_deflection=0.9)])
         self.assertNotIn("Deflection Value", envelope_values(a))
+        self.assertNotIn("Deflection Unit", envelope_values(a))
+        self.assertNotIn("Max Pressure Achieved", envelope_values(a))
 
 
 class EndToEnd(unittest.TestCase):

@@ -55,9 +55,9 @@ def completed(**over):
         "Test Result": "Pass",
         "Measured Value": 40.0,
         "Unit": "PSF",
-        "Max Pressure Achieved": 41.0,
-        "Deflection Value": 0.42,
-        "Deflection Unit": "in",
+        # A2/A3: Max Pressure Achieved and the deflection pair are omitted by
+        # decision and refused by the envelope, so a valid completed payload
+        # does not contain them.
         "Required Value": 40.0,
         "Required Unit": "PSF",
         "Result Detail (JSON)": {"steps": [{"step": 1, "target": 20.0}]},
@@ -96,9 +96,12 @@ class BlankRules(unittest.TestCase):
         self.assertNotIn("Notes", w)
 
     def test_zero_is_data_not_a_blank(self):
-        w = build_terminal(completed(**{"Measured Value": 0, "Max Pressure Achieved": 0}))
-        self.assertEqual(w["Measured Value"], 0)
-        self.assertEqual(w["Max Pressure Achieved"], 0)
+        """A 0 PSF reading is a measurement. Uses Measured Value, since the
+        field this originally used - Max Pressure Achieved - is now omitted by
+        decision (A2) and refused before the blank rules are reached."""
+        w = build_terminal(completed(**{"Measured Value": 0.0}))
+        self.assertEqual(w["Measured Value"], 0.0)
+        self.assertIn("Measured Value", w)
 
     def test_false_is_data(self):
         w = build_terminal(completed(**{"Retest Required": False}))
@@ -171,23 +174,52 @@ class Lifecycle(unittest.TestCase):
 
 
 class TestTypeMatrix(unittest.TestCase):
-    def test_static_load_needs_its_measurements(self):
+    def test_static_load_no_longer_requires_the_omitted_measurements(self):
+        """A2/A3 inverted this. It used to REQUIRE Max Pressure Achieved."""
         v = completed()
-        v.pop("Max Pressure Achieved")
+        for omitted in ("Max Pressure Achieved", "Deflection Value", "Deflection Unit"):
+            v.pop(omitted, None)
+        w = build_terminal(v)                      # must not raise
+        self.assertEqual(w["Test Status"], "Completed")
+        for omitted in ("Max Pressure Achieved", "Deflection Value"):
+            self.assertNotIn(omitted, w)
+
+    def test_sending_an_omitted_measurement_is_refused(self):
+        """The other half: not required, and not permitted either."""
+        v = completed()
+        v["Max Pressure Achieved"] = 61.2
         with self.assertRaises(EnvelopeError) as ctx:
             build_terminal(v)
         self.assertIn("Max Pressure Achieved", str(ctx.exception))
-        self.assertIn("§5.1", str(ctx.exception))
+        self.assertIn("omitted by decision", str(ctx.exception))
 
-    def test_cycles_needs_cycle_counts(self):
+    def test_an_omitted_value_cannot_hide_in_the_json_valve(self):
+        """Rejected before the column/JSON split, so the overflow is no escape."""
+        v = completed()
+        v["Deflection Value"] = 0.18
+        v["Deflection Unit"] = "in"
+        with self.assertRaises(EnvelopeError) as ctx:
+            build_terminal(v)
+        self.assertIn("Deflection Value", str(ctx.exception))
+
+    def test_a_completed_static_load_carries_no_physical_number(self):
+        """The decided initial behaviour, asserted so nobody changes it by accident."""
+        v = completed()
+        for omitted in ("Max Pressure Achieved", "Deflection Value", "Deflection Unit"):
+            v.pop(omitted, None)
+        w = build_terminal(v)
+        self.assertIn("Test Result", w)
+        self.assertIn("Complete LabOS JSON Response", w)
+
+    def test_cycles_needs_its_completed_count(self):
+        """`Cycles Required` dropped with A9 - it is a requirement, not a result."""
         v = completed(**{"Test Type": C.CYCLES})
         with self.assertRaises(EnvelopeError) as ctx:
             build_terminal(v)
-        self.assertIn("Cycles Required", str(ctx.exception))
+        self.assertIn("Cycles Completed", str(ctx.exception))
 
     def test_cycles_passes_with_counts(self):
-        v = completed(**{"Test Type": C.CYCLES,
-                         "Cycles Required": 4500, "Cycles Completed": 4500})
+        v = completed(**{"Test Type": C.CYCLES, "Cycles Completed": 4500})
         w = build_terminal(v)
         self.assertEqual(detail(w)["labos_extra"]["cycles_completed"], 4500)
 
@@ -213,11 +245,17 @@ class PairwiseRules(unittest.TestCase):
             build_terminal(v)
         self.assertIn("Unit", str(ctx.exception))
 
-    def test_deflection_value_requires_deflection_unit(self):
-        v = completed()
-        v.pop("Deflection Unit")
-        with self.assertRaises(EnvelopeError):
+    def test_the_deflection_pairwise_rule_is_now_unreachable(self):
+        """A3 omits the deflection pair, so the omission guard fires first.
+
+        The pairwise rule stays in the envelope rather than being deleted: M6
+        un-quarantines these fields, and when it does the rule must already be
+        there. This asserts which guard wins today.
+        """
+        v = completed(**{"Deflection Value": 0.42})
+        with self.assertRaises(EnvelopeError) as ctx:
             build_terminal(v)
+        self.assertIn("omitted by decision", str(ctx.exception))
 
     def test_correction_reason_without_reference_refused(self):
         with self.assertRaises(EnvelopeError):
@@ -266,16 +304,28 @@ class SelectOptions(unittest.TestCase):
         w = build_terminal(completed(), live_options=live)
         self.assertEqual(w["Test Result"], "Passed")
 
-    def test_only_static_load_survives_the_live_test_type_set(self):
-        """§10.17, stated as an executable fact rather than a note."""
+    def test_all_five_test_types_now_survive_the_live_option_set(self):
+        """§10.17 CLOSED. This test used to assert the opposite, and that was
+        correct at the time: the base offered only 'Static Load' and the other
+        four had nowhere to land. They shipped all five without telling us."""
         from app.airtable import probe
         from tests import fake_schema as FS
         live = options_from_snapshot(probe.build_snapshot(FS.schema()))
-        self.assertEqual(live["Test Type"], ("Static Load",))
-        for unsupported in ("Cycles", "Impact", "Forced Entry", "ANSI Z97.1"):
-            with self.assertRaises(EnvelopeError, msg=unsupported):
-                build_terminal(completed(**{"Test Type": unsupported}),
-                               live_options=live)
+        self.assertEqual(set(live["Test Type"]), set(C.TEST_TYPES))
+        w = build_terminal(completed(), live_options=live)
+        self.assertEqual(w["Test Type"], "Static Load")
+        w = build_terminal(completed(**{"Test Type": C.CYCLES, "Cycles Completed": 4500}),
+                           live_options=live)
+        self.assertEqual(w["Test Type"], "Cycles")
+
+    def test_an_option_outside_the_live_set_is_still_refused(self):
+        """The guard itself must survive the closure it was written for."""
+        from app.airtable import probe
+        from tests import fake_schema as FS
+        live = options_from_snapshot(probe.build_snapshot(FS.schema()))
+        with self.assertRaises(EnvelopeError):
+            build_terminal(completed(**{"Test Type": "Water Infiltration"}),
+                           live_options=live)
 
 
 class TestDateCollapse(unittest.TestCase):
@@ -304,26 +354,34 @@ class TestDateCollapse(unittest.TestCase):
 
 
 class CorrectionGuard(unittest.TestCase):
-    """§3.1 / §10.14 — the field does not exist yet, and this matters."""
+    """§3.1 / §10.14 — the field exists now, so a correction is a first-class row."""
 
-    def test_correction_refused_while_the_field_is_absent(self):
+    def test_a_correction_now_builds_as_a_real_column(self):
+        """Both correction fields were applied 2026-09-06, so the guard that
+        refused this no longer fires - and it stops firing on its own, because
+        it keys off the contract's record of whether the field exists."""
         v = completed(**{"Corrects Attempt ID": "ATT-2026-000144",
                          "Correction Reason": "PSI logged as PSF",
                          "Attempt Number": 2})
-        with self.assertRaises(EnvelopeError) as ctx:
-            build_terminal(v)
-        msg = str(ctx.exception)
-        self.assertIn("§10.14", msg)
-        self.assertIn("retest", msg)
+        w = build_terminal(v)
+        self.assertEqual(w["Corrects Attempt ID"], "ATT-2026-000144")
+        self.assertIn("PSI", w["Correction Reason"])
 
-    def test_override_records_it_in_the_json_valve(self):
-        v = completed(**{"Corrects Attempt ID": "ATT-2026-000144",
-                         "Correction Reason": "PSI logged as PSF",
-                         "Attempt Number": 2})
-        w = build_terminal(v, allow_unreferenced_correction=True)
-        extra = detail(w)["labos_extra"]
-        self.assertEqual(extra["corrects_attempt_id"], "ATT-2026-000144")
-        self.assertIn("PSI", extra["correction_reason"])
+    def test_the_guard_still_fires_if_the_field_goes_away(self):
+        """The protection, not just the current state: if the field were ever
+        removed, a correction must refuse rather than look like a retest."""
+        field = C.BY_LABOS_NAME["Corrects Attempt ID"]
+        original, field.v2 = field.v2, C.ABSENT
+        try:
+            v = completed(**{"Corrects Attempt ID": "ATT-2026-000144",
+                             "Correction Reason": "PSI logged as PSF",
+                             "Attempt Number": 2})
+            with self.assertRaises(EnvelopeError) as ctx:
+                build_terminal(v)
+            self.assertIn("§10.14", str(ctx.exception))
+            self.assertIn("retest", str(ctx.exception))
+        finally:
+            field.v2 = original
 
     def test_reference_without_a_reason_refused(self):
         v = completed(**{"Corrects Attempt ID": "ATT-2026-000144"})

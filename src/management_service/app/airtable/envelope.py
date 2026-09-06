@@ -169,6 +169,29 @@ def build(values, *, status, live_options=None, allow_unreferenced_correction=Fa
         _require(present, ("Abort Reason",),
                  "contract §4.3 — an Aborted row must record its cause")
 
+    # ---- omitted-by-decision fields (A2, A3, A9) ---------------------------
+    # Checked here, before the column/JSON split, because the contract rejects
+    # these in **both** scalars and JSON. Routing an unvalidated measurement into
+    # the overflow would satisfy the letter of "we do not publish it" while
+    # publishing it, which is worse than sending it as a column: it would be
+    # harder to notice.
+    #
+    # The point is not that the value is unavailable. It is that a value exists
+    # and we cannot stand behind it - a target mistaken for an achievement, or
+    # raw IO-Link counts mislabelled as inches.
+    omitted = sorted(n for n in present
+                     if n in C.BY_LABOS_NAME and C.BY_LABOS_NAME[n].omitted)
+    if omitted:
+        raise EnvelopeError(
+            f"refusing to publish {omitted}: omitted by decision, not by "
+            "absence. 'Max Pressure Achieved' has no measurement source at all "
+            "(A2, milestone M7); deflection values are uncalibrated raw counts "
+            "(A3, milestone M6); requirement echoes are not read from Airtable "
+            "(A9). Rejected in the JSON as well as in the columns - a number we "
+            "cannot stand behind is worse in the overflow than in a field, "
+            "because nobody looks there."
+        )
+
     # ---- pairwise rules ----------------------------------------------------
     if "Measured Value" in present:
         _require(present, ("Unit",), "contract §4.4 — Unit is required whenever Measured Value is sent")
