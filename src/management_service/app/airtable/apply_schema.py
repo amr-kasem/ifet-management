@@ -136,6 +136,53 @@ FIELDS = [
             "unrecognised option stays visible but cannot start a test."),
     }),
 
+    # --- Protocol Sections: Impact requirements (added 2026-09-08) -----------
+    #
+    # A9 closed these as OMITTED on 2026-09-06, when LabOS read no requirement
+    # values at all. That was reversed on 2026-09-08: LabOS reads the **typed**
+    # fields and never parses the legacy `Value` string, which is what the PDF
+    # extractor corrupts. Pre-fill is therefore safe by construction, and Impact
+    # is the one test type it could not yet serve — the count arrives via
+    # `Required Value` + `IMPACT_LMI`/`IMPACT_SMI`, but the missile did not.
+    #
+    # Three, not four. `Impact Locations` stays out: location is a per-shot
+    # observation LabOS already records on `shots.area`, not a requirement, and
+    # a speculative field now propagates into production rather than sitting
+    # harmlessly in a sandbox.
+    #
+    # All three map 1:1 onto columns that already exist in the LabOS database —
+    # `missile_impact_tests.missile`, `.missile_weight`, `shots.velocity` — so
+    # nothing new has to be modelled to consume them.
+    (PROTOCOL_SECTIONS, {
+        "name": "Missile Type",
+        "type": "singleLineText",
+        "description": (
+            "The missile the protocol specifies, e.g. 'Large Missile D'. Free text "
+            "because the standard's set is open and LabOS does not invent an option "
+            "set the requirement side does not have. Pre-fills "
+            "missile_impact_tests.missile so an operator does not retype what the "
+            "protocol already fixes."),
+    }),
+    (PROTOCOL_SECTIONS, {
+        "name": "Missile Weight",
+        "type": "number",
+        "options": {"precision": 2},
+        "description": (
+            "Missile mass in pounds, as the protocol specifies it. Pre-fills "
+            "missile_impact_tests.missile_weight. A requirement, never a "
+            "measurement — LabOS never writes an achieved value back here."),
+    }),
+    (PROTOCOL_SECTIONS, {
+        "name": "Impact Velocity",
+        "type": "number",
+        "options": {"precision": 2},
+        "description": (
+            "Target impact velocity in ft/s that the protocol requires. Pre-fills "
+            "the per-shot target; the achieved velocity stays in LabOS on "
+            "shots.velocity and is not published back. A target is never an "
+            "achieved value (decision A2)."),
+    }),
+
     # --- LabOS Raw Data Table: corrections, review identity, execution times, evidence
     (RAW_RESULTS, {
         "name": "Corrects Attempt ID",
