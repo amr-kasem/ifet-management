@@ -33,12 +33,19 @@ engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 app = FastAPI()
 
-# Create uploads directory if it doesn't exist
-uploads_dir = Path("uploads")
-uploads_dir.mkdir(exist_ok=True)
+# Create uploads directory if it doesn't exist.
+#
+# Configurable since 2026-09-08. It was a hard-coded relative path created at
+# import time, which meant `app.main` could not be imported anywhere the working
+# directory is read-only — including the test harness, where the repo is mounted
+# `:ro`. Originals live here and stay local: Airtable receives only a downscaled
+# preview (write contract §6), so this directory is the evidence of record and
+# belongs on a bind mount, not inside the image.
+uploads_dir = Path(os.getenv("LABOS_UPLOADS_DIR", "uploads"))
+uploads_dir.mkdir(parents=True, exist_ok=True)
 
 # Mount static files for uploaded images
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+app.mount("/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")
 
 # Dependency to get the session
 def get_db():
@@ -1188,3 +1195,318 @@ async def download_project_parent_report(parent_id: int, db: Session = Depends(g
         media_type="application/pdf",
         headers={"Content-Disposition": f"inline; filename=project_parent_{parent_id}_report.pdf"}
     )
+
+# ============================================================================
+# Manual test capture — Impact, Forced Entry, ANSI Z97.1
+# ============================================================================
+#
+# Delivery plan §4.5. None of these three touches the rig: no VFD, no valves,
+# no pressure setpoint, no stage trials. `state_machine` accepts exactly one
+# command — `start`, mode `manual` or `cyclic` — and none of these is either,
+# so the firmware is not involved and needs no release.
+#
+# Three phases, matching the write contract: create → finish → verdict.
+#
+#   create   allocates identity, sets Test Result = Pending
+#   finish   records the operator's outcome and freezes the evidence
+#   verdict  a NAMED REVIEWER records Pass/Fail/Inconclusive, once
+#
+# The operator's `result` boolean and the reviewer's `test_result` are
+# deliberately different columns. They are different people and different
+# moments, and collapsing them is what lets an operator certify their own work.
+#
+# Nothing in this section imports `app.airtable` or `app.sync`. `report-api`
+# never calls Airtable; results reach it through the outbox, and
+# `tests/test_report_api_isolation.py` enforces that.
+
+MANUAL_TEST_TYPES = ("Forced Entry", "ANSI Z97.1")
+_IN_PROGRESS, _COMPLETED, _ABORTED = "In Progress", "Completed", "Aborted"
+_PENDING = "Pending"
+
+
+def _utcnow():
+    import datetime as _dt
+    return _dt.datetime.now(_dt.timezone.utc)
+
+
+def _next_attempt_number(db, model, project_id, **extra):
+    """Server-side allocation. A client that chose its own could overwrite one.
+
+    Every attempt is retained — the product owner's requirement is that the same
+    test may be attempted more than once and LabOS keeps them all — so this
+    counts existing attempts rather than replacing them.
+    """
+    q = db.query(model).filter(model.project_id == project_id)
+    for k, v in extra.items():
+        q = q.filter(getattr(model, k) == v)
+    return q.count() + 1
+
+
+def _require_project(db, project_id):
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return project
+
+
+def _require_open(test, what):
+    if test.status != _IN_PROGRESS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{what} is already {test.status}; evidence is frozen. "
+                   "A further result requires a new attempt.")
+
+
+def _apply_verdict(db, test, verdict, what):
+    """The first review. Once, with a name and a time on it.
+
+    Refused on an attempt still In Progress: contract §4 freezes evidence on
+    termination and reviews it afterwards. Refused twice: the first verdict
+    stands, and a change is a correction — a new attempt referring to this one,
+    never an edit of it.
+    """
+    if test.status == _IN_PROGRESS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{what} has not been finished; a verdict cannot precede termination.")
+    if test.verdict_at is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{what} was already reviewed by {test.verdict_by!r} at "
+                   f"{test.verdict_at.isoformat()}. The first verdict stands; record a "
+                   "correction as a new attempt instead.")
+    test.test_result = verdict.test_result
+    test.verdict_by = verdict.verdict_by
+    test.verdict_at = _utcnow()
+    test.retest_required = verdict.retest_required
+    if verdict.rationale:
+        test.note = f"{test.note}\n\n[review] {verdict.rationale}" if test.note \
+            else f"[review] {verdict.rationale}"
+    db.commit()
+    db.refresh(test)
+    return test
+
+
+def _save_photo(db, upload, note, **owner):
+    suffix = Path(upload.filename or "").suffix or ".jpg"
+    stored = f"{uuid.uuid4()}{suffix}"
+    dest = uploads_dir / stored
+    with dest.open("wb") as fh:
+        shutil.copyfileobj(upload.file, fh)
+    photo = TestPhoto(filename=upload.filename or stored, path=str(dest),
+                      note=note, created_at=_utcnow(), **owner)
+    db.add(photo)
+    db.commit()
+    db.refresh(photo)
+    return photo
+
+
+# ---------------------------------------------- Forced Entry / ANSI Z97.1 ---
+
+@app.post("/projects/{project_id}/manual-tests/", response_model=ManualTestSchema)
+def create_manual_test(project_id: int, body: ManualTestCreateSchema,
+                       db: Session = Depends(get_db)):
+    _require_project(db, project_id)
+    test = ManualTest(
+        project_id=project_id,
+        type=body.type,
+        required_option=body.required_option,
+        operator_name=body.operator_name,
+        airtable_protocol_id=body.airtable_protocol_id,
+        airtable_section_id=body.airtable_section_id,
+        airtable_section_name=body.airtable_section_name,
+        labos_attempt_id=str(uuid.uuid4()),
+        attempt_number=_next_attempt_number(db, ManualTest, project_id, type=body.type),
+        status=_IN_PROGRESS,
+        test_result=_PENDING,
+        testing_start_date=_utcnow(),
+    )
+    db.add(test)
+    db.commit()
+    db.refresh(test)
+    logger.info("manual test %s attempt %s started on project %s",
+                test.type, test.attempt_number, project_id)
+    return test
+
+
+@app.get("/projects/{project_id}/manual-tests/", response_model=List[ManualTestSchema])
+def list_manual_tests(project_id: int, type: Optional[str] = None,
+                      db: Session = Depends(get_db)):
+    _require_project(db, project_id)
+    q = db.query(ManualTest).filter(ManualTest.project_id == project_id)
+    if type:
+        q = q.filter(ManualTest.type == type)
+    return q.order_by(ManualTest.id).all()
+
+
+@app.put("/manual-tests/{test_id}/finish", response_model=ManualTestSchema)
+def finish_manual_test(test_id: int, body: ManualTestFinishSchema,
+                       db: Session = Depends(get_db)):
+    test = db.query(ManualTest).filter(ManualTest.id == test_id).first()
+    if not test:
+        raise HTTPException(status_code=404, detail="Manual test not found")
+    _require_open(test, "This manual test")
+
+    # Completion is explicit or it is an abort with a reason. Never inferred
+    # from a timeout or a disconnect: missing telemetry is not a pass.
+    if body.abort_reason:
+        test.status = _ABORTED
+        test.abort_reason = body.abort_reason
+    else:
+        if body.result is None:
+            raise HTTPException(
+                status_code=400,
+                detail="A completed Forced Entry or ANSI Z97.1 test records pass or fail. "
+                       "Supply `result`, or `abort_reason` to abandon the attempt.")
+        test.status = _COMPLETED
+        test.result = body.result
+
+    test.note = body.note or test.note
+    test.testing_continued = body.testing_continued
+    test.testing_end_date = _utcnow()
+    # Test Result stays Pending — the verdict is the reviewer's, not this call's.
+    db.commit()
+    db.refresh(test)
+    return test
+
+
+@app.put("/manual-tests/{test_id}/verdict", response_model=ManualTestSchema)
+def review_manual_test(test_id: int, body: VerdictSchema, db: Session = Depends(get_db)):
+    test = db.query(ManualTest).filter(ManualTest.id == test_id).first()
+    if not test:
+        raise HTTPException(status_code=404, detail="Manual test not found")
+    return _apply_verdict(db, test, body, "This manual test")
+
+
+@app.post("/manual-tests/{test_id}/photos", response_model=PhotoSchema)
+def add_manual_test_photo(test_id: int, file: UploadFile = File(...),
+                          note: Optional[str] = Form(None),
+                          db: Session = Depends(get_db)):
+    test = db.query(ManualTest).filter(ManualTest.id == test_id).first()
+    if not test:
+        raise HTTPException(status_code=404, detail="Manual test not found")
+    if test.verdict_at is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="This attempt has been reviewed; its evidence is frozen. Adding "
+                   "substantive evidence afterwards requires a correction.")
+    return _save_photo(db, file, note, manual_test_id=test.id)
+
+
+# ------------------------------------------------------- Missile Impact ---
+#
+# `missile_impact_tests` and `shots` already exist and already hold production
+# data — 39 tests and 114 shots — but there has never been a create route:
+# Impact was write-by-report-generation only. These add the capture path.
+
+@app.post("/projects/{project_id}/impact-tests/", response_model=ImpactTestSchema)
+def create_impact_test(project_id: int, body: ImpactTestCreateSchema,
+                       db: Session = Depends(get_db)):
+    _require_project(db, project_id)
+    test = MissileImpactTest(
+        project_id=project_id,
+        missile=body.missile,
+        missile_weight=body.missile_weight,
+        operator_name=body.operator_name,
+        airtable_protocol_id=body.airtable_protocol_id,
+        airtable_section_id=body.airtable_section_id,
+        airtable_section_name=body.airtable_section_name,
+        labos_attempt_id=str(uuid.uuid4()),
+        attempt_number=_next_attempt_number(db, MissileImpactTest, project_id),
+        status=_IN_PROGRESS,
+        test_result=_PENDING,
+        testing_start_date=_utcnow(),
+    )
+    db.add(test)
+    db.commit()
+    db.refresh(test)
+    return test
+
+
+@app.get("/projects/{project_id}/impact-tests/", response_model=List[ImpactTestSchema])
+def list_impact_tests(project_id: int, db: Session = Depends(get_db)):
+    _require_project(db, project_id)
+    return (db.query(MissileImpactTest)
+            .filter(MissileImpactTest.project_id == project_id)
+            .order_by(MissileImpactTest.id).all())
+
+
+@app.post("/impact-tests/{test_id}/shots", response_model=ShotSchema)
+def record_shot(test_id: int, body: ShotRecordSchema, db: Session = Depends(get_db)):
+    """One impact: whether it passed, and optionally where and how fast.
+
+    The business shape is "how many impacts and whether each passed". Area and
+    velocity are optional because the protocol fixes them; requiring them per
+    shot was retyping, not data capture.
+    """
+    test = db.query(MissileImpactTest).filter(MissileImpactTest.id == test_id).first()
+    if not test:
+        raise HTTPException(status_code=404, detail="Impact test not found")
+    _require_open(test, "This impact test")
+    shot = Shot(missile_impact_test_id=test.id, result=body.result,
+                area=body.area, velocity=body.velocity, note=body.note)
+    db.add(shot)
+    db.commit()
+    db.refresh(shot)
+    return shot
+
+
+@app.put("/impact-tests/{test_id}/finish", response_model=ImpactTestSchema)
+def finish_impact_test(test_id: int, body: ManualTestFinishSchema,
+                       db: Session = Depends(get_db)):
+    test = db.query(MissileImpactTest).filter(MissileImpactTest.id == test_id).first()
+    if not test:
+        raise HTTPException(status_code=404, detail="Impact test not found")
+    _require_open(test, "This impact test")
+
+    if body.abort_reason:
+        test.status = _ABORTED
+        test.abort_reason = body.abort_reason
+    else:
+        if not test.shots:
+            raise HTTPException(
+                status_code=400,
+                detail="A completed impact test records at least one impact. Post a shot, "
+                       "or supply `abort_reason` to abandon the attempt.")
+        # Impact requires photographic evidence, and it is checked HERE rather
+        # than in the outbound payload. Attachments are their own delivery
+        # channel and may settle after the row is published (write contract §6),
+        # so making the upload a precondition for publishing would let a queued
+        # file block a measured result. The requirement belongs where the
+        # operator is.
+        if not test.photos:
+            raise HTTPException(
+                status_code=400,
+                detail="A completed impact test requires at least one photograph. "
+                       "Evidence cannot be added once the attempt is reviewed.")
+        test.status = _COMPLETED
+
+    test.note = body.note or test.note
+    test.testing_continued = body.testing_continued
+    test.testing_end_date = _utcnow()
+    db.commit()
+    db.refresh(test)
+    return test
+
+
+@app.put("/impact-tests/{test_id}/verdict", response_model=ImpactTestSchema)
+def review_impact_test(test_id: int, body: VerdictSchema, db: Session = Depends(get_db)):
+    test = db.query(MissileImpactTest).filter(MissileImpactTest.id == test_id).first()
+    if not test:
+        raise HTTPException(status_code=404, detail="Impact test not found")
+    return _apply_verdict(db, test, body, "This impact test")
+
+
+@app.post("/impact-tests/{test_id}/photos", response_model=PhotoSchema)
+def add_impact_photo(test_id: int, file: UploadFile = File(...),
+                     note: Optional[str] = Form(None),
+                     db: Session = Depends(get_db)):
+    test = db.query(MissileImpactTest).filter(MissileImpactTest.id == test_id).first()
+    if not test:
+        raise HTTPException(status_code=404, detail="Impact test not found")
+    if test.verdict_at is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="This attempt has been reviewed; its evidence is frozen. Adding "
+                   "substantive evidence afterwards requires a correction.")
+    return _save_photo(db, file, note, missile_impact_test_id=test.id)

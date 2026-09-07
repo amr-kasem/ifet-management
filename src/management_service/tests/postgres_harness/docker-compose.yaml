@@ -45,6 +45,9 @@ services:
     build: .
     environment:
       M2_DATABASE_URL: postgresql+psycopg2://m2:m2-throwaway-not-a-secret@postgres:5432/m2
+      # The repo is mounted read-only, so photo uploads need somewhere writable
+      # that is thrown away with the container.
+      LABOS_UPLOADS_DIR: /tmp/labos-uploads
     volumes:
       - ../../:/app:ro
     working_dir: /app

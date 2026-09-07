@@ -1,0 +1,3891 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "FastAPI",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/devices/": {
+      "get": {
+        "summary": "List Devices",
+        "operationId": "list_devices_devices__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/DeviceSchema"
+                  },
+                  "type": "array",
+                  "title": "Response List Devices Devices  Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create Device",
+        "operationId": "create_device_devices__post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceCreateSchema"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/devices/{device_id}": {
+      "get": {
+        "summary": "Get Device",
+        "operationId": "get_device_devices__device_id__get",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceMiniSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/devices/{device_id}/": {
+      "put": {
+        "summary": "Update Device",
+        "operationId": "update_device_devices__device_id___put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceSchema"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/devices/{device_id}/projects/": {
+      "get": {
+        "summary": "Get Projects By Device Id",
+        "operationId": "get_projects_by_device_id_devices__device_id__projects__get",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Device Id"
+            }
+          },
+          {
+            "name": "parent_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Parent Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ProjectSchema"
+                  },
+                  "title": "Response Get Projects By Device Id Devices  Device Id  Projects  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create Project For Device",
+        "operationId": "create_project_for_device_devices__device_id__projects__post",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectCreateSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}": {
+      "put": {
+        "summary": "Update Project",
+        "operationId": "update_project_projects__project_id__put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectCreateSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/static_tests/": {
+      "post": {
+        "summary": "Create Static Test",
+        "operationId": "create_static_test_projects__project_id__static_tests__post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StaticTestCreateSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaticTestSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/static_tests": {
+      "put": {
+        "summary": "Update Static Tests",
+        "operationId": "update_static_tests_projects__project_id__static_tests_put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/StaticTestUpdateSchema"
+                },
+                "title": "Static Tests Data"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/static-tests/{static_test_index}/": {
+      "get": {
+        "summary": "Get Static Test",
+        "operationId": "get_static_test_projects__project_id__static_tests__static_test_index___get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "static_test_index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Static Test Index"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaticTestSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update Static Test",
+        "operationId": "update_static_test_projects__project_id__static_tests__static_test_index___put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "static_test_index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Static Test Index"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StaticTestUpdateSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaticTestSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete Static Test",
+        "operationId": "delete_static_test_projects__project_id__static_tests__static_test_index___delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "static_test_index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Static Test Index"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Static Test Projects  Project Id  Static Tests  Static Test Index   Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/static_tests/{static_test_index}/trials": {
+      "post": {
+        "summary": "Create Static Test Trial",
+        "operationId": "create_static_test_trial_projects__project_id__static_tests__static_test_index__trials_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "static_test_index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Static Test Index"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StaticTestResultCreateSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaticTestResultSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "Get Static Test Trials",
+        "operationId": "get_static_test_trials_projects__project_id__static_tests__static_test_index__trials_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "static_test_index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Static Test Index"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/StaticTestResultSchema"
+                  },
+                  "title": "Response Get Static Test Trials Projects  Project Id  Static Tests  Static Test Index  Trials Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/static_tests/{static_test_index}/finish": {
+      "put": {
+        "summary": "Finish Static Test",
+        "operationId": "finish_static_test_projects__project_id__static_tests__static_test_index__finish_put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "static_test_index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Static Test Index"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaticTestSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/cyclic-tests/": {
+      "post": {
+        "summary": "Create Cyclic Test",
+        "operationId": "create_cyclic_test_projects__project_id__cyclic_tests__post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CyclicTestCreateSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CyclicTestSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/cyclic-tests/{cyclic_test_index}/": {
+      "get": {
+        "summary": "Get Cyclic Test",
+        "operationId": "get_cyclic_test_projects__project_id__cyclic_tests__cyclic_test_index___get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "cyclic_test_index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cyclic Test Index"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CyclicTestSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update Cyclic Test",
+        "operationId": "update_cyclic_test_projects__project_id__cyclic_tests__cyclic_test_index___put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "cyclic_test_index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cyclic Test Index"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CyclicTestUpdateSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CyclicTestSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Delete Cyclic Test",
+        "operationId": "delete_cyclic_test_projects__project_id__cyclic_tests__cyclic_test_index___delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "cyclic_test_index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cyclic Test Index"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Cyclic Test Projects  Project Id  Cyclic Tests  Cyclic Test Index   Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/cyclic_tests": {
+      "put": {
+        "summary": "Update Cyclic Tests",
+        "operationId": "update_cyclic_tests_projects__project_id__cyclic_tests_put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/CyclicTestUpdateSchema"
+                },
+                "title": "Cyclic Tests Data"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/cyclic-tests/{cyclic_test_index}/trials": {
+      "post": {
+        "summary": "Create Cyclic Test Trial",
+        "operationId": "create_cyclic_test_trial_projects__project_id__cyclic_tests__cyclic_test_index__trials_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "cyclic_test_index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cyclic Test Index"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CyclicTestResultCreateSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CyclicTestResultSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "Get Cyclic Test Trials",
+        "operationId": "get_cyclic_test_trials_projects__project_id__cyclic_tests__cyclic_test_index__trials_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "cyclic_test_index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cyclic Test Index"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/CyclicTestResultSchema"
+                  },
+                  "title": "Response Get Cyclic Test Trials Projects  Project Id  Cyclic Tests  Cyclic Test Index  Trials Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/next-cyclic-test": {
+      "get": {
+        "summary": "Get Next Cyclic Test",
+        "operationId": "get_next_cyclic_test_projects__project_id__next_cyclic_test_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CyclicTestSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/cyclic_tests/{cyclic_test_index}/start": {
+      "put": {
+        "summary": "Start Cyclic Test",
+        "operationId": "start_cyclic_test_projects__project_id__cyclic_tests__cyclic_test_index__start_put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "cyclic_test_index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cyclic Test Index"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CyclicTestSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/cyclic_tests/{cyclic_test_index}/update_status": {
+      "put": {
+        "summary": "Update Cyclic Test Status",
+        "operationId": "update_cyclic_test_status_projects__project_id__cyclic_tests__cyclic_test_index__update_status_put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "cyclic_test_index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cyclic Test Index"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CyclicTestUpdateStatusSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CyclicTestSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/cyclic_tests/{cyclic_test_index}/reset": {
+      "put": {
+        "summary": "Reset Cyclic Test Status",
+        "operationId": "reset_cyclic_test_status_projects__project_id__cyclic_tests__cyclic_test_index__reset_put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "cyclic_test_index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cyclic Test Index"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CyclicTestSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/cyclic_tests/{cyclic_test_index}/finish": {
+      "put": {
+        "summary": "Finish Cyclic Test",
+        "operationId": "finish_cyclic_test_projects__project_id__cyclic_tests__cyclic_test_index__finish_put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "cyclic_test_index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Cyclic Test Index"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CyclicTestSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/devices/{master_id}/turbo_master": {
+      "put": {
+        "summary": "Enable Turbo",
+        "operationId": "enable_turbo_devices__master_id__turbo_master_put",
+        "parameters": [
+          {
+            "name": "master_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Master Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceTurboMaster"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/devices/{slave_id}/turbo_slave": {
+      "put": {
+        "summary": "Set Turbo Slave",
+        "operationId": "set_turbo_slave_devices__slave_id__turbo_slave_put",
+        "parameters": [
+          {
+            "name": "slave_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Slave Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeviceTurboSlave"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeviceSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/test-results/{test_result_id}": {
+      "get": {
+        "summary": "Get Test Result",
+        "description": "Get a test result by ID.",
+        "operationId": "get_test_result_test_results__test_result_id__get",
+        "parameters": [
+          {
+            "name": "test_result_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Test Result Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestResultResponseSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update Test Result",
+        "description": "Update a test result with note and/or image.\nThe image will be saved to a local directory and the path will be stored in the database.",
+        "operationId": "update_test_result_test_results__test_result_id__put",
+        "parameters": [
+          {
+            "name": "test_result_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Test Result Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_update_test_result_test_results__test_result_id__put"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestResultResponseSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/project-parents": {
+      "get": {
+        "summary": "Get Project Parents",
+        "operationId": "get_project_parents_project_parents_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProjectParentSchema"
+                  },
+                  "type": "array",
+                  "title": "Response Get Project Parents Project Parents Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create Project Parent",
+        "operationId": "create_project_parent_project_parents_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectParentCreateSchema"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectParentSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/report": {
+      "get": {
+        "summary": "Download Specimen Report",
+        "description": "Download comprehensive test report for all specimens under the project parent\nNote: When user selects any specimen, report includes ALL specimens in that project parent",
+        "operationId": "download_specimen_report_projects__project_id__report_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/project-parents/{parent_id}/report": {
+      "get": {
+        "summary": "Download Project Parent Report",
+        "description": "Download comprehensive test report for a project parent including all specimens",
+        "operationId": "download_project_parent_report_project_parents__parent_id__report_get",
+        "parameters": [
+          {
+            "name": "parent_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Parent Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/manual-tests/": {
+      "post": {
+        "summary": "Create Manual Test",
+        "operationId": "create_manual_test_projects__project_id__manual_tests__post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualTestCreateSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManualTestSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "List Manual Tests",
+        "operationId": "list_manual_tests_projects__project_id__manual_tests__get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Type"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ManualTestSchema"
+                  },
+                  "title": "Response List Manual Tests Projects  Project Id  Manual Tests  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/manual-tests/{test_id}/finish": {
+      "put": {
+        "summary": "Finish Manual Test",
+        "operationId": "finish_manual_test_manual_tests__test_id__finish_put",
+        "parameters": [
+          {
+            "name": "test_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Test Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualTestFinishSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManualTestSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/manual-tests/{test_id}/verdict": {
+      "put": {
+        "summary": "Review Manual Test",
+        "operationId": "review_manual_test_manual_tests__test_id__verdict_put",
+        "parameters": [
+          {
+            "name": "test_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Test Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerdictSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ManualTestSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/manual-tests/{test_id}/photos": {
+      "post": {
+        "summary": "Add Manual Test Photo",
+        "operationId": "add_manual_test_photo_manual_tests__test_id__photos_post",
+        "parameters": [
+          {
+            "name": "test_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Test Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_add_manual_test_photo_manual_tests__test_id__photos_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PhotoSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/impact-tests/": {
+      "post": {
+        "summary": "Create Impact Test",
+        "operationId": "create_impact_test_projects__project_id__impact_tests__post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImpactTestCreateSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImpactTestSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "List Impact Tests",
+        "operationId": "list_impact_tests_projects__project_id__impact_tests__get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ImpactTestSchema"
+                  },
+                  "title": "Response List Impact Tests Projects  Project Id  Impact Tests  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/impact-tests/{test_id}/shots": {
+      "post": {
+        "summary": "Record Shot",
+        "description": "One impact: whether it passed, and optionally where and how fast.\n\nThe business shape is \"how many impacts and whether each passed\". Area and\nvelocity are optional because the protocol fixes them; requiring them per\nshot was retyping, not data capture.",
+        "operationId": "record_shot_impact_tests__test_id__shots_post",
+        "parameters": [
+          {
+            "name": "test_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Test Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShotRecordSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShotSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/impact-tests/{test_id}/finish": {
+      "put": {
+        "summary": "Finish Impact Test",
+        "operationId": "finish_impact_test_impact_tests__test_id__finish_put",
+        "parameters": [
+          {
+            "name": "test_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Test Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ManualTestFinishSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImpactTestSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/impact-tests/{test_id}/verdict": {
+      "put": {
+        "summary": "Review Impact Test",
+        "operationId": "review_impact_test_impact_tests__test_id__verdict_put",
+        "parameters": [
+          {
+            "name": "test_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Test Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerdictSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImpactTestSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/impact-tests/{test_id}/photos": {
+      "post": {
+        "summary": "Add Impact Photo",
+        "operationId": "add_impact_photo_impact_tests__test_id__photos_post",
+        "parameters": [
+          {
+            "name": "test_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Test Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_add_impact_photo_impact_tests__test_id__photos_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PhotoSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Body_add_impact_photo_impact_tests__test_id__photos_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_add_impact_photo_impact_tests__test_id__photos_post"
+      },
+      "Body_add_manual_test_photo_manual_tests__test_id__photos_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_add_manual_test_photo_manual_tests__test_id__photos_post"
+      },
+      "Body_update_test_result_test_results__test_result_id__put": {
+        "properties": {
+          "note": {
+            "type": "string",
+            "title": "Note"
+          },
+          "image": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "Image"
+          }
+        },
+        "type": "object",
+        "title": "Body_update_test_result_test_results__test_result_id__put"
+      },
+      "CyclicTestCreateSchema": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "cycles": {
+            "type": "integer",
+            "title": "Cycles"
+          },
+          "low_pressure": {
+            "type": "number",
+            "title": "Low Pressure"
+          },
+          "high_pressure": {
+            "type": "number",
+            "title": "High Pressure"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "cycles",
+          "low_pressure",
+          "high_pressure"
+        ],
+        "title": "CyclicTestCreateSchema"
+      },
+      "CyclicTestResultCreateSchema": {
+        "properties": {
+          "deflections": {
+            "items": {
+              "$ref": "#/components/schemas/DeflectionCreateSchema"
+            },
+            "type": "array",
+            "title": "Deflections"
+          }
+        },
+        "type": "object",
+        "required": [
+          "deflections"
+        ],
+        "title": "CyclicTestResultCreateSchema"
+      },
+      "CyclicTestResultSchema": {
+        "properties": {
+          "deflections": {
+            "items": {
+              "$ref": "#/components/schemas/DeflectionCreateSchema"
+            },
+            "type": "array",
+            "title": "Deflections"
+          },
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "trial_number": {
+            "type": "integer",
+            "title": "Trial Number"
+          },
+          "image_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Path"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "deflections",
+          "id",
+          "trial_number"
+        ],
+        "title": "CyclicTestResultSchema"
+      },
+      "CyclicTestSchema": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "cycles": {
+            "type": "integer",
+            "title": "Cycles"
+          },
+          "low_pressure": {
+            "type": "number",
+            "title": "Low Pressure"
+          },
+          "high_pressure": {
+            "type": "number",
+            "title": "High Pressure"
+          },
+          "finished": {
+            "type": "boolean",
+            "title": "Finished"
+          },
+          "index": {
+            "type": "integer",
+            "title": "Index"
+          },
+          "resume": {
+            "type": "boolean",
+            "title": "Resume"
+          },
+          "current_cycle": {
+            "type": "integer",
+            "title": "Current Cycle"
+          },
+          "trials": {
+            "items": {
+              "$ref": "#/components/schemas/CyclicTestResultSchema"
+            },
+            "type": "array",
+            "title": "Trials"
+          },
+          "preset": {
+            "type": "boolean",
+            "title": "Preset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "cycles",
+          "low_pressure",
+          "high_pressure",
+          "finished",
+          "index",
+          "resume",
+          "current_cycle",
+          "trials",
+          "preset"
+        ],
+        "title": "CyclicTestSchema"
+      },
+      "CyclicTestUpdateSchema": {
+        "properties": {
+          "index": {
+            "type": "integer",
+            "title": "Index"
+          },
+          "cycles": {
+            "type": "integer",
+            "title": "Cycles"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "low_pressure": {
+            "type": "number",
+            "title": "Low Pressure"
+          },
+          "high_pressure": {
+            "type": "number",
+            "title": "High Pressure"
+          }
+        },
+        "type": "object",
+        "required": [
+          "index",
+          "cycles",
+          "type",
+          "low_pressure",
+          "high_pressure"
+        ],
+        "title": "CyclicTestUpdateSchema"
+      },
+      "CyclicTestUpdateStatusSchema": {
+        "properties": {
+          "current_cycle": {
+            "type": "integer",
+            "title": "Current Cycle"
+          }
+        },
+        "type": "object",
+        "required": [
+          "current_cycle"
+        ],
+        "title": "CyclicTestUpdateStatusSchema"
+      },
+      "DeflectionCreateSchema": {
+        "properties": {
+          "deflection_gauge": {
+            "type": "string",
+            "title": "Deflection Gauge"
+          },
+          "max_deflection": {
+            "type": "number",
+            "title": "Max Deflection"
+          },
+          "permanent_deflection": {
+            "type": "number",
+            "title": "Permanent Deflection"
+          },
+          "recovery": {
+            "type": "number",
+            "title": "Recovery"
+          }
+        },
+        "type": "object",
+        "required": [
+          "deflection_gauge",
+          "max_deflection",
+          "permanent_deflection",
+          "recovery"
+        ],
+        "title": "DeflectionCreateSchema"
+      },
+      "DeviceCreateSchema": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "DeviceCreateSchema"
+      },
+      "DeviceMiniSchema": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "turbo_mode": {
+            "type": "boolean",
+            "title": "Turbo Mode"
+          },
+          "turbo_slave": {
+            "type": "boolean",
+            "title": "Turbo Slave"
+          },
+          "turbo_charger": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turbo Charger"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "id",
+          "turbo_mode",
+          "turbo_slave",
+          "turbo_charger"
+        ],
+        "title": "DeviceMiniSchema"
+      },
+      "DeviceSchema": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "projects": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectSchema"
+            },
+            "type": "array",
+            "title": "Projects"
+          },
+          "turbo_mode": {
+            "type": "boolean",
+            "title": "Turbo Mode"
+          },
+          "turbo_slave": {
+            "type": "boolean",
+            "title": "Turbo Slave"
+          },
+          "turbo_charger": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turbo Charger"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "id",
+          "projects",
+          "turbo_mode",
+          "turbo_slave",
+          "turbo_charger"
+        ],
+        "title": "DeviceSchema"
+      },
+      "DeviceTurboMaster": {
+        "properties": {
+          "slave_id": {
+            "type": "integer",
+            "title": "Slave Id"
+          },
+          "turbo_mode": {
+            "type": "boolean",
+            "title": "Turbo Mode"
+          }
+        },
+        "type": "object",
+        "required": [
+          "slave_id",
+          "turbo_mode"
+        ],
+        "title": "DeviceTurboMaster"
+      },
+      "DeviceTurboSlave": {
+        "properties": {
+          "slave_mode": {
+            "type": "boolean",
+            "title": "Slave Mode"
+          }
+        },
+        "type": "object",
+        "required": [
+          "slave_mode"
+        ],
+        "title": "DeviceTurboSlave"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "ImpactTestCreateSchema": {
+        "properties": {
+          "missile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Missile"
+          },
+          "missile_weight": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Missile Weight"
+          },
+          "operator_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operator Name"
+          },
+          "airtable_protocol_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Airtable Protocol Id"
+          },
+          "airtable_section_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Airtable Section Id"
+          },
+          "airtable_section_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Airtable Section Name"
+          }
+        },
+        "type": "object",
+        "title": "ImpactTestCreateSchema",
+        "description": "Start a missile impact attempt.\n\nMissile and weight are optional: the protocol normally fixes them, and\nrequiring them per attempt was retyping rather than data capture. When the\njob came from Airtable they are pre-filled from `Missile Type` and\n`Missile Weight`."
+      },
+      "ImpactTestSchema": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "project_id": {
+            "type": "integer",
+            "title": "Project Id"
+          },
+          "missile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Missile"
+          },
+          "missile_weight": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Missile Weight"
+          },
+          "labos_attempt_id": {
+            "type": "string",
+            "title": "Labos Attempt Id"
+          },
+          "attempt_number": {
+            "type": "integer",
+            "title": "Attempt Number"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "test_result": {
+            "type": "string",
+            "title": "Test Result"
+          },
+          "abort_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Abort Reason"
+          },
+          "operator_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operator Name"
+          },
+          "verdict_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict By"
+          },
+          "verdict_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict At"
+          },
+          "retest_required": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retest Required"
+          },
+          "testing_start_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Testing Start Date"
+          },
+          "testing_end_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Testing End Date"
+          },
+          "testing_continued": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Testing Continued"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "airtable_protocol_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Airtable Protocol Id"
+          },
+          "airtable_section_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Airtable Section Id"
+          },
+          "airtable_section_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Airtable Section Name"
+          },
+          "shots": {
+            "items": {
+              "$ref": "#/components/schemas/ShotSchema"
+            },
+            "type": "array",
+            "title": "Shots",
+            "default": []
+          },
+          "photos": {
+            "items": {
+              "$ref": "#/components/schemas/PhotoSchema"
+            },
+            "type": "array",
+            "title": "Photos",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "project_id",
+          "labos_attempt_id",
+          "attempt_number",
+          "status",
+          "test_result"
+        ],
+        "title": "ImpactTestSchema"
+      },
+      "InfiltrationTestSchema": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "pressure": {
+            "type": "number",
+            "title": "Pressure"
+          },
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "duration": {
+            "type": "number",
+            "title": "Duration"
+          },
+          "leakage": {
+            "type": "number",
+            "title": "Leakage"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "pressure",
+          "id",
+          "duration",
+          "leakage"
+        ],
+        "title": "InfiltrationTestSchema"
+      },
+      "ManualTestCreateSchema": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "Forced Entry",
+              "ANSI Z97.1"
+            ],
+            "title": "Type"
+          },
+          "required_option": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Required Option"
+          },
+          "operator_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operator Name"
+          },
+          "airtable_protocol_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Airtable Protocol Id"
+          },
+          "airtable_section_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Airtable Section Id"
+          },
+          "airtable_section_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Airtable Section Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "title": "ManualTestCreateSchema",
+        "description": "Start a Forced Entry or ANSI Z97.1 attempt.\n\n`attempt_number`, `labos_attempt_id` and `status` are allocated\nserver-side - a client that could choose its own attempt number could\nsilently overwrite an earlier one."
+      },
+      "ManualTestFinishSchema": {
+        "properties": {
+          "result": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "testing_continued": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Testing Continued"
+          },
+          "abort_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Abort Reason"
+          }
+        },
+        "type": "object",
+        "title": "ManualTestFinishSchema",
+        "description": "Terminate. Explicit completion, or an abort with a reason - never inferred.\n\n`result` is the operator's recorded outcome. It is not the verdict: the\nverdict is a separate act by a named reviewer (write contract \u00a74)."
+      },
+      "ManualTestSchema": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "project_id": {
+            "type": "integer",
+            "title": "Project Id"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "required_option": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Required Option"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "labos_attempt_id": {
+            "type": "string",
+            "title": "Labos Attempt Id"
+          },
+          "attempt_number": {
+            "type": "integer",
+            "title": "Attempt Number"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "test_result": {
+            "type": "string",
+            "title": "Test Result"
+          },
+          "abort_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Abort Reason"
+          },
+          "operator_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operator Name"
+          },
+          "verdict_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict By"
+          },
+          "verdict_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict At"
+          },
+          "retest_required": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retest Required"
+          },
+          "testing_start_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Testing Start Date"
+          },
+          "testing_end_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Testing End Date"
+          },
+          "testing_continued": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Testing Continued"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "airtable_protocol_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Airtable Protocol Id"
+          },
+          "airtable_section_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Airtable Section Id"
+          },
+          "airtable_section_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Airtable Section Name"
+          },
+          "photos": {
+            "items": {
+              "$ref": "#/components/schemas/PhotoSchema"
+            },
+            "type": "array",
+            "title": "Photos",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "project_id",
+          "type",
+          "labos_attempt_id",
+          "attempt_number",
+          "status",
+          "test_result"
+        ],
+        "title": "ManualTestSchema"
+      },
+      "MissileImpactTestSchema": {
+        "properties": {
+          "missile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Missile"
+          },
+          "missile_weight": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Missile Weight"
+          },
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "shots": {
+            "items": {
+              "$ref": "#/components/schemas/ShotSchema"
+            },
+            "type": "array",
+            "title": "Shots"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "shots"
+        ],
+        "title": "MissileImpactTestSchema"
+      },
+      "PhotoSchema": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "filename": {
+            "type": "string",
+            "title": "Filename"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "filename"
+        ],
+        "title": "PhotoSchema"
+      },
+      "ProjectCreateSchema": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "inward_design_pressure": {
+            "type": "number",
+            "title": "Inward Design Pressure"
+          },
+          "outward_design_pressure": {
+            "type": "number",
+            "title": "Outward Design Pressure"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "has_water_infiltration": {
+            "type": "boolean",
+            "title": "Has Water Infiltration",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "inward_design_pressure",
+          "outward_design_pressure"
+        ],
+        "title": "ProjectCreateSchema"
+      },
+      "ProjectParentCreateSchema": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "ProjectParentCreateSchema"
+      },
+      "ProjectParentSchema": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "id"
+        ],
+        "title": "ProjectParentSchema"
+      },
+      "ProjectSchema": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "inward_design_pressure": {
+            "type": "number",
+            "title": "Inward Design Pressure"
+          },
+          "outward_design_pressure": {
+            "type": "number",
+            "title": "Outward Design Pressure"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "has_water_infiltration": {
+            "type": "boolean",
+            "title": "Has Water Infiltration",
+            "default": false
+          },
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "device_id": {
+            "type": "integer",
+            "title": "Device Id"
+          },
+          "static_tests": {
+            "items": {
+              "$ref": "#/components/schemas/StaticTestSchema"
+            },
+            "type": "array",
+            "title": "Static Tests"
+          },
+          "infiltration_tests": {
+            "items": {
+              "$ref": "#/components/schemas/InfiltrationTestSchema"
+            },
+            "type": "array",
+            "title": "Infiltration Tests"
+          },
+          "missile_impact_tests": {
+            "items": {
+              "$ref": "#/components/schemas/MissileImpactTestSchema"
+            },
+            "type": "array",
+            "title": "Missile Impact Tests"
+          },
+          "cyclic_tests": {
+            "items": {
+              "$ref": "#/components/schemas/CyclicTestSchema"
+            },
+            "type": "array",
+            "title": "Cyclic Tests"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "inward_design_pressure",
+          "outward_design_pressure",
+          "id",
+          "device_id",
+          "static_tests",
+          "infiltration_tests",
+          "missile_impact_tests",
+          "cyclic_tests"
+        ],
+        "title": "ProjectSchema"
+      },
+      "ShotRecordSchema": {
+        "properties": {
+          "result": {
+            "type": "boolean",
+            "title": "Result"
+          },
+          "area": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Area"
+          },
+          "velocity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Velocity"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "result"
+        ],
+        "title": "ShotRecordSchema",
+        "description": "One impact. Pass or fail is the whole requirement; the rest is optional.\n\n`result` has no default on purpose. A shot without an outcome is not a shot,\nand a default of False would silently record a failure nobody observed."
+      },
+      "ShotSchema": {
+        "properties": {
+          "area": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Area"
+          },
+          "velocity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Velocity"
+          },
+          "result": {
+            "type": "boolean",
+            "title": "Result"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "result",
+          "id"
+        ],
+        "title": "ShotSchema"
+      },
+      "StaticTestCreateSchema": {
+        "properties": {
+          "pressure": {
+            "type": "number",
+            "title": "Pressure"
+          },
+          "duration": {
+            "type": "integer",
+            "title": "Duration"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pressure",
+          "duration",
+          "type"
+        ],
+        "title": "StaticTestCreateSchema"
+      },
+      "StaticTestResultCreateSchema": {
+        "properties": {
+          "deflections": {
+            "items": {
+              "$ref": "#/components/schemas/DeflectionCreateSchema"
+            },
+            "type": "array",
+            "title": "Deflections"
+          }
+        },
+        "type": "object",
+        "required": [
+          "deflections"
+        ],
+        "title": "StaticTestResultCreateSchema"
+      },
+      "StaticTestResultSchema": {
+        "properties": {
+          "deflections": {
+            "items": {
+              "$ref": "#/components/schemas/DeflectionCreateSchema"
+            },
+            "type": "array",
+            "title": "Deflections"
+          },
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "trial_number": {
+            "type": "integer",
+            "title": "Trial Number"
+          },
+          "image_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Path"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "deflections",
+          "id",
+          "trial_number"
+        ],
+        "title": "StaticTestResultSchema"
+      },
+      "StaticTestSchema": {
+        "properties": {
+          "pressure": {
+            "type": "number",
+            "title": "Pressure"
+          },
+          "duration": {
+            "type": "integer",
+            "title": "Duration"
+          },
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "finished": {
+            "type": "boolean",
+            "title": "Finished"
+          },
+          "index": {
+            "type": "integer",
+            "title": "Index"
+          },
+          "trials": {
+            "items": {
+              "$ref": "#/components/schemas/StaticTestResultSchema"
+            },
+            "type": "array",
+            "title": "Trials"
+          },
+          "preset": {
+            "type": "boolean",
+            "title": "Preset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "pressure",
+          "duration",
+          "type",
+          "id",
+          "finished",
+          "index",
+          "trials",
+          "preset"
+        ],
+        "title": "StaticTestSchema"
+      },
+      "StaticTestUpdateSchema": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "index": {
+            "type": "integer",
+            "title": "Index"
+          },
+          "duration": {
+            "type": "integer",
+            "title": "Duration"
+          },
+          "pressure": {
+            "type": "number",
+            "title": "Pressure"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "index",
+          "duration",
+          "pressure"
+        ],
+        "title": "StaticTestUpdateSchema"
+      },
+      "TestResultResponseSchema": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "trial_number": {
+            "type": "integer",
+            "title": "Trial Number"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "image_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Path"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "trial_number"
+        ],
+        "title": "TestResultResponseSchema"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "VerdictSchema": {
+        "properties": {
+          "test_result": {
+            "type": "string",
+            "enum": [
+              "Pass",
+              "Fail",
+              "Inconclusive"
+            ],
+            "title": "Test Result"
+          },
+          "verdict_by": {
+            "type": "string",
+            "title": "Verdict By"
+          },
+          "retest_required": {
+            "type": "boolean",
+            "title": "Retest Required"
+          },
+          "rationale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rationale"
+          }
+        },
+        "type": "object",
+        "required": [
+          "test_result",
+          "verdict_by",
+          "retest_required"
+        ],
+        "title": "VerdictSchema",
+        "description": "The first review. Recorded once, by someone with a name.\n\nAll four travel together by contract \u00a76. `retest_required` is required\nrather than defaulted: an unchecked box is not a decision, and defaulting it\nto False would publish an answer nobody gave."
+      }
+    }
+  }
+}
