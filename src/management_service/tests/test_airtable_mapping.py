@@ -45,10 +45,14 @@ def attempt(**over):
         labos_attempt_id="a-uuid-1", labos_test_id="t-uuid-1", trial_number=1,
         schema_version=None, corrects_attempt_id=None, correction_reason=None,
         status="Completed", test_type="Static Load", test_name=None,
-        test_result="Pass", abort_reason=None,
+        # §6: a terminal attempt is Pending until a review happens. `reviewed()`
+        # below is the fixture that carries a verdict.
+        test_result=None, abort_reason=None,
         # §4.5 requires this on any terminal write — the envelope enforces it.
         testing_continued="Stopped",
-        terminal_at=dt.datetime(2026, 8, 23, 14, 33, tzinfo=UTC), retest_required=False,
+        terminal_at=dt.datetime(2026, 8, 23, 14, 33, tzinfo=UTC),
+        # None, not False — an unreviewed attempt has not answered the question.
+        retest_required=None, verdict_by=None, verdict_at=None,
         measured_value=60.0, unit="PSF", max_pressure_achieved=63.2,
         deflection_value=None, deflection_unit="in", impact_result=None,
         cycles_required=None, cycles_completed=None,
@@ -69,6 +73,15 @@ def attempt(**over):
     )
     d.update(over)
     return Stub(**d)
+
+
+def reviewed(**over):
+    """A first-review attempt — verdict, reviewer, time and retest together."""
+    d = dict(test_result="Pass", retest_required=False,
+             verdict_by="Reviewer Name",
+             verdict_at=dt.datetime(2026, 8, 23, 15, 0, tzinfo=UTC))
+    d.update(over)
+    return attempt(**d)
 
 
 class Linkage(unittest.TestCase):
@@ -123,11 +136,21 @@ class Fields(unittest.TestCase):
         self.assertNotIn("Abort Reason", v)
         self.assertNotIn("Correction Reason", v)
 
-    def test_retest_required_is_always_an_explicit_bool(self):
-        """§4.5 — an omitted value must not be readable as false."""
-        for given in (None, False, 0):
-            v = envelope_values(attempt(retest_required=given))
-            self.assertIs(v["Retest Required"], False)
+    def test_retest_required_is_an_explicit_bool_or_absent(self):
+        """§6 — meaningful only once review exists, never inferred false.
+
+        This test asserted its own opposite until 2026-09-07: the docstring
+        said an omitted value must not be readable as false, and the loop
+        asserted that `None` produced exactly `False`. Both the mapping and the
+        test agreed, so the defect was invisible — an unreviewed attempt
+        published a definite "no retest required" that no reviewer had given.
+        """
+        self.assertNotIn("Retest Required",
+                         envelope_values(attempt(retest_required=None)))
+        for given in (False, 0):
+            with self.subTest(given):
+                v = envelope_values(attempt(retest_required=given))
+                self.assertIs(v["Retest Required"], False)
         self.assertIs(envelope_values(attempt(retest_required=True))["Retest Required"], True)
 
     def test_requirement_the_attempt_ran_against_is_carried(self):
@@ -179,8 +202,22 @@ class EndToEnd(unittest.TestCase):
         wire = envelope.build(envelope_values(a), status=a.status)
         self.assertEqual(wire["LabOS Attempt ID"], "a-uuid-1")
         self.assertEqual(wire["Airtable Mockup ID"], "recMOCK")   # their spelling
-        self.assertEqual(wire["Test Result"], "Passed")           # §10.16 translation
+        self.assertEqual(wire["Test Result"], "Pending")          # §6 — not yet reviewed
         self.assertEqual(wire["Attempt Number"], 1)
+
+    def test_reviewed_attempt_carries_the_verdict_and_the_reviewer(self):
+        a = reviewed()
+        wire = envelope.build(envelope_values(a), status=a.status,
+                              phase=envelope.VERDICT)
+        self.assertEqual(wire["Test Result"], "Passed")           # §10.16 translation
+        self.assertEqual(wire["LabOS Verdict By"], "Reviewer Name")
+        self.assertIs(wire["Retest Required"], False)
+
+    def test_an_unreviewed_attempt_never_asserts_no_retest(self):
+        """§6 — bool(None) is False, and False here is an answer nobody gave."""
+        self.assertNotIn("Retest Required",
+                         envelope.build(envelope_values(attempt()),
+                                        status="Completed"))
 
     def test_aborted_attempt_carries_their_misspelling(self):
         a = attempt(status="Aborted", test_result=None,

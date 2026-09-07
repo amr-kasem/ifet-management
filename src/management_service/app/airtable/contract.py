@@ -293,6 +293,23 @@ TEST_TYPES = (STATIC_LOAD, CYCLES, IMPACT, FORCED_ENTRY, ANSI_Z97)
 # (§6) and it survives the terminal write; only the first review replaces it.
 RESULT_PENDING = "Pending"
 
+# The three a first review may record. §4: "Test Result is Pending until the
+# first review, then Passed, Failed or Inconclusive." `Not Applicable` is not
+# here on purpose — §4 reserves it for Airtable's own handling of work LabOS
+# never ran, and LabOS creates no row for a section it did not execute.
+VERDICTS = ("Pass", "Fail", "Inconclusive")
+
+# Written together, once, by the first review (§6): "first review updates
+# verdict, Retest Required, reviewer fields and JSON together."
+#
+# `Retest Required` sat in TERMINAL_REQUIRED until 2026-09-07, which made an
+# unreviewed attempt carry a checkbox. §6 is explicit that it "is meaningful
+# only once review exists, never inferred false from an unreviewed checkbox" —
+# and an unchecked box is indistinguishable from a considered "no retest", so
+# the default was not neutral, it was an unearned answer.
+VERDICT_REQUIRED = ("Test Result", "LabOS Verdict By", "LabOS Verdict At",
+                    "Retest Required")
+
 IN_PROGRESS = "In Progress"
 COMPLETED = "Completed"
 ABORTED = "Aborted"
@@ -361,5 +378,4 @@ ALWAYS_REQUIRED = (
 # `Abort Reason` are still required data carried inside
 # `Complete LabOS JSON Response`, because otherwise an Airtable schema decision
 # would quietly reduce what a completed attempt has to prove.
-TERMINAL_REQUIRED = ("Operator Name", "Retest Required", "Testing Continued",
-                     "Testing End Date")
+TERMINAL_REQUIRED = ("Operator Name", "Testing Continued", "Testing End Date")

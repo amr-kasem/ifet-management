@@ -15,6 +15,7 @@ from app.airtable.envelope import (
     build,
     build_start,
     build_terminal,
+    build_verdict,
     options_from_snapshot,
 )
 
@@ -49,10 +50,11 @@ def completed(**over):
     v.pop("Operator_Name", None)
     v.update({
         "Operator Name": "Technician Name",
-        "Retest Required": False,
         "Testing Continued": "Stopped",
         "Testing End Date": T1,
-        "Test Result": "Pass",
+        # §6: terminal result is Pending. The verdict, the reviewer and Retest
+        # Required arrive together in the first-review phase — see reviewed().
+        "Test Result": "Pending",
         "Measured Value": 40.0,
         "Unit": "PSF",
         # A2/A3: Max Pressure Achieved and the deflection pair are omitted by
@@ -61,6 +63,19 @@ def completed(**over):
         "Required Value": 40.0,
         "Required Unit": "PSF",
         "Result Detail (JSON)": {"steps": [{"step": 1, "target": 20.0}]},
+    })
+    v.update(over)
+    return v
+
+
+def reviewed(**over):
+    """A first-review payload: the frozen identity plus what §6 writes once."""
+    v = completed()
+    v.update({
+        "Test Result": "Pass",
+        "LabOS Verdict By": "Reviewer Name",
+        "LabOS Verdict At": T1,
+        "Retest Required": False,
     })
     v.update(over)
     return v
@@ -104,7 +119,9 @@ class BlankRules(unittest.TestCase):
         self.assertIn("Measured Value", w)
 
     def test_false_is_data(self):
-        w = build_terminal(completed(**{"Retest Required": False}))
+        """A reviewer's explicit 'no retest' is data; an unchecked box is not.
+        §6 keeps them apart by putting the field in the review phase only."""
+        w = build_verdict(reviewed(**{"Retest Required": False}))
         self.assertIs(w["Retest Required"], False)
 
     def test_empty_string_is_refused(self):
@@ -138,11 +155,27 @@ class Lifecycle(unittest.TestCase):
             build_terminal(v)
         self.assertIn("Operator Name", str(ctx.exception))
 
-    def test_completed_requires_a_result(self):
+    def test_completed_terminal_defaults_the_result_to_pending(self):
+        """§6 — the terminal write carries the measurement, not the judgement."""
         v = completed()
         v.pop("Test Result")
+        self.assertEqual(build_terminal(v)["Test Result"], "Pending")
+
+    def test_a_review_requires_an_actual_verdict(self):
+        v = reviewed()
+        v.pop("Test Result")
         with self.assertRaises(EnvelopeError):
-            build_terminal(v)
+            build_verdict(v)
+
+    def test_a_review_requires_a_named_reviewer_and_a_time(self):
+        """§4 — operator and reviewer are stored separately, even when they are
+        the same person, so a verdict with nobody's name on it is not a verdict."""
+        for missing in ("LabOS Verdict By", "LabOS Verdict At"):
+            with self.subTest(missing):
+                v = reviewed()
+                v.pop(missing)
+                with self.assertRaises(EnvelopeError):
+                    build_verdict(v)
 
     def test_aborted_requires_a_reason(self):
         v = completed()
@@ -270,27 +303,30 @@ class SelectOptions(unittest.TestCase):
 
     def test_labos_spelling_is_translated_to_theirs(self):
         """§10.16 — callers speak LabOS; the wire speaks Airtable."""
-        self.assertEqual(build_terminal(completed())["Test Result"], "Passed")
+        self.assertEqual(build_verdict(reviewed())["Test Result"], "Passed")
 
     def test_their_spelling_is_not_accepted_from_a_caller(self):
         """The translation has exactly one direction, so there is one vocabulary
         inside LabOS. A caller passing 'Passed' is a caller who guessed."""
         with self.assertRaises(EnvelopeError) as ctx:
-            build_terminal(completed(**{"Test Result": "Passed"}))
-        self.assertIn("never invents a select option", str(ctx.exception))
+            build_verdict(reviewed(**{"Test Result": "Passed"}))
+        # The phase guard now catches it before _check_option does, which is a
+        # better error: it names the LabOS vocabulary rather than the wire one.
+        self.assertIn("'Pass'", str(ctx.exception))
+
 
     def test_translated_value_is_checked_against_the_live_set(self):
         live = {"Test Result": ("Pending", "Passed", "Failed", "Not Applicable",
                                 "Inconclusive")}
         self.assertEqual(
-            build_terminal(completed(), live_options=live)["Test Result"], "Passed")
+            build_verdict(reviewed(), live_options=live)["Test Result"], "Passed")
 
     def test_option_missing_from_the_live_base_is_refused_locally(self):
         """§10.17 — the real case: their base has no option for four of the five
         LabOS test types, so this must fail here rather than as a 422."""
         live = {"Test Result": ("Inconclusive",)}
         with self.assertRaises(EnvelopeError) as ctx:
-            build_terminal(completed(), live_options=live)
+            build_verdict(reviewed(), live_options=live)
         self.assertIn("live base has no option", str(ctx.exception))
         self.assertIn("translates to", str(ctx.exception))
 
@@ -301,7 +337,7 @@ class SelectOptions(unittest.TestCase):
         self.assertEqual(live["Test Result"],
                          ("Pending", "Passed", "Failed", "Not Applicable",
                           "Inconclusive"))
-        w = build_terminal(completed(), live_options=live)
+        w = build_verdict(reviewed(), live_options=live)
         self.assertEqual(w["Test Result"], "Passed")
 
     def test_all_five_test_types_now_survive_the_live_option_set(self):
@@ -476,14 +512,15 @@ class ContractAlignment(unittest.TestCase):
     """
 
     def test_every_R_field_is_enforced_somewhere(self):
-        enforced = set(C.ALWAYS_REQUIRED) | set(C.TERMINAL_REQUIRED)
+        enforced = (set(C.ALWAYS_REQUIRED) | set(C.TERMINAL_REQUIRED)
+                    | set(C.VERDICT_REQUIRED))
         unenforced = [f.labos_name for f in C.FIELDS
                       if f.req == C.REQUIRED and f.labos_name not in enforced]
         self.assertEqual(unenforced, [],
                          "fields marked R in contract §4 with no validation")
 
     def test_required_sets_reference_real_fields(self):
-        for name in C.ALWAYS_REQUIRED + C.TERMINAL_REQUIRED:
+        for name in C.ALWAYS_REQUIRED + C.TERMINAL_REQUIRED + C.VERDICT_REQUIRED:
             self.assertIn(name, C.BY_LABOS_NAME, f"{name!r} is not a contract §4 field")
 
     def test_matrix_references_real_fields(self):

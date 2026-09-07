@@ -137,9 +137,23 @@ def envelope_values(attempt, *, strict=True):
         "Testing Start Date": attempt.testing_start_date,
         "Testing End Date": attempt.testing_end_date,
         "Operator Name": attempt.operator_name,
-        # Explicit bool: contract §4.5 says an omitted value must not read as
-        # false, so this is never allowed to become None by accident.
-        "Retest Required": bool(attempt.retest_required),
+        # §6: "Retest Required is meaningful only once review exists, never
+        # inferred false from an unreviewed checkbox."
+        #
+        # This was `bool(attempt.retest_required)` until 2026-09-07, which did
+        # precisely what that sentence forbids: an unreviewed attempt has None
+        # here, and bool(None) is False — an unearned answer, indistinguishable
+        # on the wire from a reviewer who considered a retest and decided
+        # against one. Passed through untouched now, so an unreviewed attempt
+        # omits the key and the envelope's phase guard keeps it out of the
+        # terminal write entirely.
+        "Retest Required": (None if attempt.retest_required is None
+                            else bool(attempt.retest_required)),
+        # Written once by the first review, with the verdict (§6). getattr
+        # because the reviewer columns do not exist on the legacy attempt model
+        # yet — that persistence is the other half of step 3.
+        "LabOS Verdict By": getattr(attempt, "verdict_by", None),
+        "LabOS Verdict At": getattr(attempt, "verdict_at", None),
         "Testing Continued": attempt.testing_continued,
         "Notes": attempt.note,
 

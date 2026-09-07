@@ -131,7 +131,16 @@ def _require(present, names, why):
         raise EnvelopeError(f"missing required field(s) {missing} — {why}")
 
 
-def build(values, *, status, live_options=None, allow_unreferenced_correction=False):
+# Delivery phases (§4). `build()` needs to know which one it is building,
+# because create, terminal and first review permit different fields and the
+# same `Test Status` covers the last two.
+CREATE = "create"
+TERMINAL = "terminal"
+VERDICT = "verdict"
+
+
+def build(values, *, status, phase=None, live_options=None,
+          allow_unreferenced_correction=False):
     """Build one Airtable record payload (wire names) for an upsert.
 
     `values` is keyed by LabOS canonical name (contract §4). Returns a plain
@@ -139,6 +148,15 @@ def build(values, *, status, live_options=None, allow_unreferenced_correction=Fa
     """
     if status not in (C.IN_PROGRESS,) + C.TERMINAL_STATUSES:
         raise EnvelopeError(f"unknown Test Status {status!r}")
+    if phase is None:
+        phase = CREATE if status == C.IN_PROGRESS else TERMINAL
+    if phase not in (CREATE, TERMINAL, VERDICT):
+        raise EnvelopeError(f"unknown phase {phase!r}")
+    if phase == VERDICT and status == C.IN_PROGRESS:
+        raise EnvelopeError(
+            "a first review cannot be recorded against an In Progress attempt "
+            "(contract §4 — evidence freezes on termination, then review)"
+        )
 
     values = dict(values)
     values["Test Status"] = status
@@ -173,8 +191,45 @@ def build(values, *, status, live_options=None, allow_unreferenced_correction=Fa
     else:
         _require(present, C.TERMINAL_REQUIRED, "contract §4.5 terminal write")
 
+        # §6: "Terminal result is Pending; first review updates verdict, Retest
+        # Required, reviewer fields and JSON together." Delivery is three
+        # phases, and the middle one is where the measurement lands, not the
+        # judgement about it.
+        #
+        # Until 2026-09-07 the terminal builder demanded the final verdict
+        # immediately, which collapsed those two phases into one. That is not a
+        # cosmetic ordering point: it means a row can only be published once
+        # somebody has already decided Pass or Fail, so either the result waits
+        # in the queue until a reviewer gets to it, or the operator supplies a
+        # verdict — and an operator-supplied verdict is exactly what §4's
+        # separate reviewer identity exists to prevent.
+        if phase == VERDICT:
+            _require(present, C.VERDICT_REQUIRED, "contract §6 first-review write")
+            if present["Test Result"] not in C.VERDICTS:
+                raise EnvelopeError(
+                    f"'Test Result' is {present['Test Result']!r} on a first-review "
+                    f"write; expected one of {list(C.VERDICTS)} (contract §4)"
+                )
+        else:
+            present.setdefault("Test Result", C.RESULT_PENDING)
+            if present["Test Result"] != C.RESULT_PENDING:
+                raise EnvelopeError(
+                    f"'Test Result' is {present['Test Result']!r} on a terminal "
+                    f"write; it stays {C.RESULT_PENDING!r} until the first review "
+                    "records a verdict with a reviewer and a time against it "
+                    "(contract §4, §6). Use build_verdict() for that phase."
+                )
+            for reviewer_only in ("LabOS Verdict By", "LabOS Verdict At",
+                                  "Retest Required"):
+                if reviewer_only in present:
+                    raise EnvelopeError(
+                        f"{reviewer_only!r} belongs to the first-review phase, not "
+                        "the terminal write (contract §6). Retest Required in "
+                        "particular is never inferred false from an unreviewed "
+                        "checkbox."
+                    )
+
     if status == C.COMPLETED:
-        _require(present, ("Test Result",), "contract §4.3 — required when Completed")
         _require(present, C.REQUIRED_BY_TEST_TYPE.get(test_type, ()),
                  f"contract §5.1 required-by-test-type matrix for {test_type!r}")
 
@@ -320,10 +375,25 @@ def build_start(values, **kw):
 
 
 def build_terminal(values, *, status=C.COMPLETED, **kw):
-    """The terminal write. Merges onto the start row via `LabOS Attempt ID`."""
+    """The terminal write. Merges onto the start row via `LabOS Attempt ID`.
+
+    Carries the measurement and freezes the evidence. `Test Result` stays
+    `Pending` here — the verdict is a separate phase with its own reviewer.
+    """
     if status not in C.TERMINAL_STATUSES:
         raise EnvelopeError(f"{status!r} is not a terminal status {list(C.TERMINAL_STATUSES)}")
-    return build(values, status=status, **kw)
+    return build(values, status=status, phase=TERMINAL, **kw)
+
+
+def build_verdict(values, *, status=C.COMPLETED, **kw):
+    """The first-review write — verdict, reviewer, time and Retest Required.
+
+    Recorded once (§4). It changes no measurement: everything else in the
+    payload is the frozen identity the upsert merges on.
+    """
+    if status not in C.TERMINAL_STATUSES:
+        raise EnvelopeError(f"{status!r} is not a terminal status {list(C.TERMINAL_STATUSES)}")
+    return build(values, status=status, phase=VERDICT, **kw)
 
 
 def options_from_snapshot(snapshot, table_id=None):
@@ -341,4 +411,5 @@ def options_from_snapshot(snapshot, table_id=None):
 
 
 __all__ = ["build", "build_start", "build_terminal", "EnvelopeError",
-           "options_from_snapshot"]
+           "build_verdict", "options_from_snapshot",
+           "CREATE", "TERMINAL", "VERDICT"]

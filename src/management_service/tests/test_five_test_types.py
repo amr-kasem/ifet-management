@@ -27,7 +27,8 @@ import unittest
 
 from app.airtable import contract as C
 from app.airtable.envelope import (
-    EnvelopeError, build_start, build_terminal, options_from_snapshot,
+    EnvelopeError, build_start, build_terminal, build_verdict,
+    options_from_snapshot,
 )
 
 UTC = dt.timezone.utc
@@ -78,13 +79,25 @@ def terminal(test_type, **over):
     v.update({
         "LabOS Updated At": T1,
         "Operator Name": "technician-1",
-        "Retest Required": False,
         "Testing Continued": "Stopped",
         "Testing End Date": T1,
         "Test Result": C.RESULT_PENDING,
         "Result Detail (JSON)": {"stages": []},
     })
     v.update(TERMINAL_EXTRA[test_type])
+    v.update(over)
+    return v
+
+
+def reviewed(test_type, **over):
+    """A first-review payload — §6 writes these four together, once."""
+    v = terminal(test_type)
+    v.update({
+        "Test Result": "Pass",
+        "LabOS Verdict By": "reviewer-1",
+        "LabOS Verdict At": T1,
+        "Retest Required": False,
+    })
     v.update(over)
     return v
 
@@ -115,12 +128,38 @@ class AllFiveTypesBuild(unittest.TestCase):
     def test_verdict_builds_for_every_type(self):
         for tt in C.TEST_TYPES:
             with self.subTest(tt):
-                w = build_terminal(
-                    terminal(tt, **{"Test Result": "Pass",
-                                    "LabOS Verdict By": "reviewer-1",
-                                    "LabOS Verdict At": T1}),
-                    live_options=self.live)
+                w = build_verdict(reviewed(tt), live_options=self.live)
                 self.assertEqual(w["Test Result"], "Passed")   # their spelling
+                self.assertEqual(w["LabOS Verdict By"], "reviewer-1")
+
+    def test_terminal_stays_pending_for_every_type(self):
+        """§6 — the measurement lands before anyone judges it."""
+        for tt in C.TEST_TYPES:
+            with self.subTest(tt):
+                w = build_terminal(terminal(tt), live_options=self.live)
+                self.assertEqual(w["Test Result"], "Pending")
+                self.assertNotIn("LabOS Verdict By", w)
+                self.assertNotIn("Retest Required", w)
+
+    def test_a_verdict_at_terminal_is_refused_for_every_type(self):
+        for tt in C.TEST_TYPES:
+            with self.subTest(tt):
+                with self.assertRaises(EnvelopeError):
+                    build_terminal(terminal(tt, **{"Test Result": "Pass"}),
+                                   live_options=self.live)
+
+    def test_retest_required_is_never_inferred_at_terminal(self):
+        """§6 — meaningful only once review exists, never an unchecked box."""
+        for tt in C.TEST_TYPES:
+            with self.subTest(tt):
+                with self.assertRaises(EnvelopeError):
+                    build_terminal(terminal(tt, **{"Retest Required": False}),
+                                   live_options=self.live)
+
+    def test_a_review_cannot_land_on_a_running_attempt(self):
+        with self.assertRaises(EnvelopeError):
+            build_verdict(reviewed(C.STATIC_LOAD), status=C.IN_PROGRESS,
+                          live_options=self.live)
 
     def test_aborted_builds_for_every_type(self):
         for tt in C.TEST_TYPES:
