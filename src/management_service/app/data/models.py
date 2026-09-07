@@ -2,6 +2,7 @@ import uuid
 
 from sqlalchemy import (
     Column, Integer, String, Float, ForeignKey, Boolean, DateTime, Text, JSON,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship, declarative_base
 
@@ -217,6 +218,13 @@ class Shot(Base):
     __tablename__ = "shots"
 
     id = Column(Integer, primary_key=True, index=True)
+
+    # The ordinal the operator sees: impact 1, 2, 3. An impact test is a
+    # sequence, not a set - "the third impact cracked the corner" is a sentence
+    # someone will need to write, and a database id is not that number.
+    # Allocated server-side and unique within the attempt.
+    shot_number = Column(Integer, nullable=False)
+
     # Widened 2026-09-08: the operator records pass/fail per impact and may skip
     # the rest. The protocol normally fixes missile and velocity, so requiring
     # them per shot was retyping, not data capture.
@@ -227,6 +235,16 @@ class Shot(Base):
 
     missile_impact_test_id = Column(Integer, ForeignKey('missile_impact_tests.id'))
     missile_impact_test = relationship("MissileImpactTest", back_populates="shots")
+
+    # Photographs of this specific impact. An attempt-level photograph has
+    # `shot_id` NULL and hangs off the test instead.
+    photos = relationship("TestPhoto", back_populates="shot",
+                          cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("missile_impact_test_id", "shot_number",
+                         name="uq_shots_test_number"),
+    )
 
 class ManualTest(Base, AirtableProtocolRef, ManualAttempt):
     """Forced Entry and ANSI Z97.1 — one table, discriminated by `type`.
@@ -292,9 +310,13 @@ class TestPhoto(Base):
     manual_test_id = Column(Integer, ForeignKey("manual_tests.id"), nullable=True)
     missile_impact_test_id = Column(Integer, ForeignKey("missile_impact_tests.id"),
                                     nullable=True)
+    # Set when the photograph shows one specific impact. NULL for an
+    # attempt-level photograph, which is all Forced Entry and ANSI ever have.
+    shot_id = Column(Integer, ForeignKey("shots.id"), nullable=True)
 
     manual_test = relationship("ManualTest", back_populates="photos")
     missile_impact_test = relationship("MissileImpactTest", back_populates="photos")
+    shot = relationship("Shot", back_populates="photos")
 
 
 class CyclicTest(Base, AirtableProtocolRef):

@@ -1973,7 +1973,7 @@
     "/impact-tests/{test_id}/shots": {
       "post": {
         "summary": "Record Shot",
-        "description": "One impact: whether it passed, and optionally where and how fast.\n\nThe business shape is \"how many impacts and whether each passed\". Area and\nvelocity are optional because the protocol fixes them; requiring them per\nshot was retyping, not data capture.",
+        "description": "Record one impact \u2014 numbered, with its outcome.\n\nAn impact test is a sequence: impact 1, impact 2, impact 3. The number is\nallocated here rather than accepted from the client, because a client that\nchose its own could number two impacts the same or renumber a sequence\nsomeone has already photographed.\n\nThe business shape is \"how many impacts and whether each passed\". Area and\nvelocity are optional because the protocol fixes them; requiring them per\nimpact was retyping, not data capture. Photographs attach afterwards, per\nimpact, via `POST /shots/{shot_id}/photos`.",
         "operationId": "record_shot_impact_tests__test_id__shots_post",
         "parameters": [
           {
@@ -2002,7 +2002,99 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ShotSchema"
+                  "$ref": "#/components/schemas/ShotDetailSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "List Shots",
+        "description": "The impacts in order, each with its value and its photographs.",
+        "operationId": "list_shots_impact_tests__test_id__shots_get",
+        "parameters": [
+          {
+            "name": "test_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Test Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ShotDetailSchema"
+                  },
+                  "title": "Response List Shots Impact Tests  Test Id  Shots Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/shots/{shot_id}/photos": {
+      "post": {
+        "summary": "Add Shot Photo",
+        "description": "Attach a photograph to one specific impact.\n\nDistinct from the attempt-level route: \"impact 3 cracked the corner\" needs\nthe photograph tied to impact 3, not to the attempt. An attempt-level\nphotograph is still available via `/impact-tests/{id}/photos` and is what\nForced Entry and ANSI Z97.1 use.",
+        "operationId": "add_shot_photo_shots__shot_id__photos_post",
+        "parameters": [
+          {
+            "name": "shot_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Shot Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_add_shot_photo_shots__shot_id__photos_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PhotoSchema"
                 }
               }
             }
@@ -2219,6 +2311,31 @@
           "file"
         ],
         "title": "Body_add_manual_test_photo_manual_tests__test_id__photos_post"
+      },
+      "Body_add_shot_photo_shots__shot_id__photos_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_add_shot_photo_shots__shot_id__photos_post"
       },
       "Body_update_test_result_test_results__test_result_id__put": {
         "properties": {
@@ -2865,7 +2982,7 @@
           },
           "shots": {
             "items": {
-              "$ref": "#/components/schemas/ShotSchema"
+              "$ref": "#/components/schemas/ShotDetailSchema"
             },
             "type": "array",
             "title": "Shots",
@@ -3331,6 +3448,17 @@
               }
             ],
             "title": "Created At"
+          },
+          "shot_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shot Id"
           }
         },
         "type": "object",
@@ -3491,6 +3619,77 @@
         ],
         "title": "ProjectSchema"
       },
+      "ShotDetailSchema": {
+        "properties": {
+          "area": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Area"
+          },
+          "velocity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Velocity"
+          },
+          "result": {
+            "type": "boolean",
+            "title": "Result"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "shot_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shot Number"
+          },
+          "photos": {
+            "items": {
+              "$ref": "#/components/schemas/PhotoSchema"
+            },
+            "type": "array",
+            "title": "Photos",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "result",
+          "id"
+        ],
+        "title": "ShotDetailSchema",
+        "description": "A recorded impact with its own photographs."
+      },
       "ShotRecordSchema": {
         "properties": {
           "result": {
@@ -3536,7 +3735,7 @@
           "result"
         ],
         "title": "ShotRecordSchema",
-        "description": "One impact. Pass or fail is the whole requirement; the rest is optional.\n\n`result` has no default on purpose. A shot without an outcome is not a shot,\nand a default of False would silently record a failure nobody observed."
+        "description": "One impact. Pass or fail is the whole requirement; the rest is optional.\n\n`result` has no default on purpose. A shot without an outcome is not a shot,\nand a default of False would silently record a failure nobody observed.\n\n`shot_number` is **not** accepted: it is allocated server-side in the order\nimpacts are recorded. A client that chose its own could number two impacts\nthe same, or renumber a sequence someone has already photographed."
       },
       "ShotSchema": {
         "properties": {
@@ -3580,6 +3779,17 @@
           "id": {
             "type": "integer",
             "title": "Id"
+          },
+          "shot_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shot Number"
           }
         },
         "type": "object",

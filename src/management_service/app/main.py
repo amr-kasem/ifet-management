@@ -1431,24 +1431,70 @@ def list_impact_tests(project_id: int, db: Session = Depends(get_db)):
             .order_by(MissileImpactTest.id).all())
 
 
-@app.post("/impact-tests/{test_id}/shots", response_model=ShotSchema)
+@app.post("/impact-tests/{test_id}/shots", response_model=ShotDetailSchema)
 def record_shot(test_id: int, body: ShotRecordSchema, db: Session = Depends(get_db)):
-    """One impact: whether it passed, and optionally where and how fast.
+    """Record one impact — numbered, with its outcome.
+
+    An impact test is a sequence: impact 1, impact 2, impact 3. The number is
+    allocated here rather than accepted from the client, because a client that
+    chose its own could number two impacts the same or renumber a sequence
+    someone has already photographed.
 
     The business shape is "how many impacts and whether each passed". Area and
     velocity are optional because the protocol fixes them; requiring them per
-    shot was retyping, not data capture.
+    impact was retyping, not data capture. Photographs attach afterwards, per
+    impact, via `POST /shots/{shot_id}/photos`.
     """
     test = db.query(MissileImpactTest).filter(MissileImpactTest.id == test_id).first()
     if not test:
         raise HTTPException(status_code=404, detail="Impact test not found")
     _require_open(test, "This impact test")
-    shot = Shot(missile_impact_test_id=test.id, result=body.result,
-                area=body.area, velocity=body.velocity, note=body.note)
+
+    next_number = (db.query(Shot)
+                   .filter(Shot.missile_impact_test_id == test.id).count()) + 1
+    shot = Shot(missile_impact_test_id=test.id, shot_number=next_number,
+                result=body.result, area=body.area, velocity=body.velocity,
+                note=body.note)
     db.add(shot)
     db.commit()
     db.refresh(shot)
+    logger.info("impact test %s: impact %s recorded as %s",
+                test.id, shot.shot_number, "pass" if shot.result else "fail")
     return shot
+
+
+@app.get("/impact-tests/{test_id}/shots", response_model=List[ShotDetailSchema])
+def list_shots(test_id: int, db: Session = Depends(get_db)):
+    """The impacts in order, each with its value and its photographs."""
+    test = db.query(MissileImpactTest).filter(MissileImpactTest.id == test_id).first()
+    if not test:
+        raise HTTPException(status_code=404, detail="Impact test not found")
+    return (db.query(Shot).filter(Shot.missile_impact_test_id == test.id)
+            .order_by(Shot.shot_number).all())
+
+
+@app.post("/shots/{shot_id}/photos", response_model=PhotoSchema)
+def add_shot_photo(shot_id: int, file: UploadFile = File(...),
+                   note: Optional[str] = Form(None),
+                   db: Session = Depends(get_db)):
+    """Attach a photograph to one specific impact.
+
+    Distinct from the attempt-level route: "impact 3 cracked the corner" needs
+    the photograph tied to impact 3, not to the attempt. An attempt-level
+    photograph is still available via `/impact-tests/{id}/photos` and is what
+    Forced Entry and ANSI Z97.1 use.
+    """
+    shot = db.query(Shot).filter(Shot.id == shot_id).first()
+    if not shot:
+        raise HTTPException(status_code=404, detail="Impact not found")
+    test = shot.missile_impact_test
+    if test is not None and test.verdict_at is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="This attempt has been reviewed; its evidence is frozen. Adding "
+                   "substantive evidence afterwards requires a correction.")
+    return _save_photo(db, file, note, shot_id=shot.id,
+                       missile_impact_test_id=test.id if test else None)
 
 
 @app.put("/impact-tests/{test_id}/finish", response_model=ImpactTestSchema)

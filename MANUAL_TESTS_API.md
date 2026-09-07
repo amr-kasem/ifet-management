@@ -4,7 +4,7 @@
 not the Airtable interface contract and nothing here crosses that boundary —
 these routes never call Airtable, and Airtable never calls them.
 
-Eleven routes covering **Impact**, **Forced Entry** and **ANSI Z97.1**: the three
+Thirteen routes covering **Impact**, **Forced Entry** and **ANSI Z97.1**: the three
 tests an operator enters by hand. Static Load and Cycles are unchanged and are
 not described here.
 
@@ -17,7 +17,7 @@ instance.
 
 | Test | What happens | What LabOS records |
 |---|---|---|
-| **Impact** | A windborne-debris missile (ASTM E1886/E1996) is fired at the specimen, N times | How many impacts, whether each passed, and photographs |
+| **Impact** | A windborne-debris missile (ASTM E1886/E1996) is fired at the specimen, N times | **Numbered impacts — 1, 2, 3 — each with its own outcome and its own photographs** |
 | **Forced Entry** | Specified loads and manipulation against the lock and sash (ASTM F588 / F476, AAMA 1304) | Pass or fail, against a named grade |
 | **ANSI Z97.1** | A weighted bag is swung into the glazing; pass if it does not break, or breaks safely | Pass or fail, against a class |
 
@@ -124,9 +124,22 @@ two test types.
 
 ---
 
-## 4. Impact — 6 routes
+## 4. Impact — 8 routes
 
-Same three phases, plus shots.
+Same three phases, plus the impacts themselves.
+
+**An impact test is a sequence, not a set.** Impact 1, impact 2, impact 3 —
+each numbered, each with its own pass/fail, each with its own photographs.
+"The third impact cracked the corner" is a sentence someone will need to write,
+and a database id is not that number.
+
+```
+  impact test
+    ├── impact 1   result: pass    photos: [ ]
+    ├── impact 2   result: pass    photos: [ 2 ]
+    └── impact 3   result: FAIL    photos: [ corner detail, wide shot ]
+    └── attempt-level photos: [ specimen before ]
+```
 
 ### `POST /projects/{project_id}/impact-tests/`
 ```json
@@ -140,21 +153,41 @@ attempt was retyping. `{}` is a valid body.
 Each attempt carries its `shots` and `photos`.
 
 ### `POST /impact-tests/{test_id}/shots`
+Record one impact.
 ```json
-{ "result": true }
+{ "result": true, "note": "corner cracked" }
 ```
-`result` is the **only** required field — this is the "how many and whether each
-passed" the product owner described. `area`, `velocity` and `note` are optional.
-Omitting `result` is **422**: a shot without an outcome is not a shot.
+`result` is the **only** required field. `area`, `velocity` and `note` are
+optional. Omitting `result` is **422**: an impact without an outcome is not an
+impact.
 
-Post one per impact. Refused once the attempt is finished.
+**`shot_number` is allocated server-side** — 1, 2, 3 in the order recorded, and
+restarting at 1 for each attempt. It is **not accepted from the client**: a
+client that chose its own could number two impacts the same, or renumber a
+sequence someone has already photographed. Sending it is ignored, not rejected.
+
+The response is the impact including its `shot_number` and (initially empty)
+`photos`. Post one per impact; refused once the attempt is finished.
+
+### `GET /impact-tests/{test_id}/shots`
+The impacts **in order**, each with its value and its photographs. This is the
+list the impact screen renders.
+
+### `POST /shots/{shot_id}/photos`
+Attach a photograph to **one specific impact**. `multipart/form-data`: `file`
+required, `note` optional.
+
+A per-impact photograph also counts as attempt evidence, so photographing each
+impact satisfies the finish requirement without a separate upload. Frozen after
+the verdict, like all evidence (**409**).
 
 ### `PUT /impact-tests/{test_id}/finish`
 Same body as the manual finish. Two extra preconditions when completing (not
 when aborting):
 
-- **at least one shot** → 400 otherwise
-- **at least one photograph** → 400 otherwise
+- **at least one impact recorded** → 400 otherwise
+- **at least one photograph** → 400 otherwise. Per-impact photographs count, so
+  this is satisfied naturally by photographing the impacts
 
 Impact is the only type that requires a photo, and it is required *here*, at
 finish — not when publishing to Airtable. Attachments upload on their own
@@ -165,8 +198,9 @@ would let a queued file block a measured result.
 Identical to the manual verdict.
 
 ### `POST /impact-tests/{test_id}/photos`
-Identical to the manual photo route. Upload **before** `finish`, since finish
-requires one.
+An **attempt-level** photograph — the specimen before testing, the overall
+setup. Use `/shots/{id}/photos` for anything showing a particular impact.
+Upload before `finish`, since finish requires at least one photograph.
 
 ---
 
@@ -199,6 +233,33 @@ fully testable — that is the normal mode, not a degraded one.
 - **`GET /projects/{id}` still works and now includes these.** `ProjectSchema`
   embeds `missile_impact_tests`; its `missile` and shot `area`/`velocity` are
   now nullable, so handle `null`.
+- **Render `shot_number`, never the shot `id`.** They are unrelated numbers, and
+  the id is meaningless to an operator.
+- **A photograph appears in exactly one place.** `shot_id` set → it belongs to
+  that impact. `shot_id` null → it is attempt-level. Do not render per-impact
+  photographs twice.
+
+---
+
+## 8. Forced Entry and ANSI Z97.1 — the minimum, deliberately
+
+Both are recorded as **pass or fail against a named grade or class**, with notes
+and optional photographs. That is the whole model today.
+
+**Where that came from, stated plainly:** the product owner's message lists
+*"Forced-entry results"* and *"ANSI Z97.1 results"* as things LabOS sends back,
+but does **not** specify their shape. The pass/fail decision is IFET's, given on
+2026-09-07. So if sub-detail is wanted later — a per-attempt-point breakdown for
+Forced Entry, or drop height and class for ANSI — that is revisiting our own
+decision, not a change of his requirement.
+
+The schema is built to allow it: both live in `manual_tests` with a `type`
+discriminator, so adding type-specific columns or a JSON detail block is
+additive. `required_option` already carries the grade or class as free text.
+
+**No dedicated Airtable scalar is added for either** — `Test Type` and
+`Test Result` are both single-selects there, so their reporting filters and
+groups both workflows natively. That stays true whatever detail we add locally.
 
 ---
 

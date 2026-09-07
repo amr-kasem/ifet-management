@@ -85,6 +85,8 @@ class ShotCreateSchema(BaseModel):
     
 class ShotSchema(ShotCreateSchema):
     id: int
+    # The ordinal the operator sees - impact 1, 2, 3 - not the database id.
+    shot_number: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -308,6 +310,9 @@ class PhotoSchema(BaseModel):
     filename: str
     note: Optional[str] = None
     created_at: Optional[_dt.datetime] = None
+    # Set when the photograph shows one specific impact; None when it belongs
+    # to the attempt as a whole.
+    shot_id: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -378,12 +383,25 @@ class ShotRecordSchema(BaseModel):
 
     `result` has no default on purpose. A shot without an outcome is not a shot,
     and a default of False would silently record a failure nobody observed.
+
+    `shot_number` is **not** accepted: it is allocated server-side in the order
+    impacts are recorded. A client that chose its own could number two impacts
+    the same, or renumber a sequence someone has already photographed.
     """
 
     result: bool
     area: Optional[float] = None
     velocity: Optional[float] = None
     note: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ShotDetailSchema(ShotSchema):
+    """A recorded impact with its own photographs."""
+
+    photos: List[PhotoSchema] = []
 
     class Config:
         from_attributes = True
@@ -415,7 +433,9 @@ class ImpactTestSchema(BaseModel):
     airtable_section_id: Optional[str] = None
     airtable_section_name: Optional[str] = None
 
-    shots: List[ShotSchema] = []
+    # Numbered, each with its own value and its own photographs.
+    shots: List[ShotDetailSchema] = []
+    # Attempt-level photographs — those not tied to a single impact.
     photos: List[PhotoSchema] = []
 
     class Config:

@@ -287,6 +287,72 @@ class ImpactFlow(unittest.TestCase):
         got = self.client.get("/projects/1/impact-tests/").json()[0]
         self.assertEqual([s["result"] for s in got["shots"]], [True, True, False])
 
+    def test_impacts_are_numbered_from_one_in_order(self):
+        """An impact test is a sequence: impact 1, 2, 3 - not a database id."""
+        t = self._create()
+        numbers = [self.client.post(f"/impact-tests/{t['id']}/shots",
+                                    json={"result": True}).json()["shot_number"]
+                   for _ in range(3)]
+        self.assertEqual(numbers, [1, 2, 3])
+
+    def test_the_client_cannot_choose_the_number(self):
+        """Two impacts numbered 3, or a renumbered sequence, is not a thing."""
+        t = self._create()
+        r = self.client.post(f"/impact-tests/{t['id']}/shots",
+                             json={"result": True, "shot_number": 7})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["shot_number"], 1)
+
+    def test_numbering_restarts_per_attempt(self):
+        a, b = self._create(), self._create()
+        first = self.client.post(f"/impact-tests/{a['id']}/shots",
+                                 json={"result": True}).json()
+        second = self.client.post(f"/impact-tests/{b['id']}/shots",
+                                  json={"result": True}).json()
+        self.assertEqual((first["shot_number"], second["shot_number"]), (1, 1))
+
+    def test_shots_list_in_order_with_their_photos(self):
+        t = self._create()
+        shot = self.client.post(f"/impact-tests/{t['id']}/shots",
+                                json={"result": False, "note": "corner cracked"}).json()
+        r = self.client.post(f"/shots/{shot['id']}/photos",
+                             files={"file": ("impact-3.jpg", io.BytesIO(b"jpg"),
+                                             "image/jpeg")},
+                             data={"note": "corner detail"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["shot_id"], shot["id"])
+
+        listed = self.client.get(f"/impact-tests/{t['id']}/shots").json()
+        self.assertEqual(len(listed), 1)
+        self.assertEqual(listed[0]["shot_number"], 1)
+        self.assertEqual(len(listed[0]["photos"]), 1)
+        self.assertEqual(listed[0]["photos"][0]["note"], "corner detail")
+
+    def test_a_per_impact_photo_also_counts_as_attempt_evidence(self):
+        """So photographing each impact satisfies the finish requirement."""
+        t = self._create()
+        shot = self.client.post(f"/impact-tests/{t['id']}/shots",
+                                json={"result": True}).json()
+        self.client.post(f"/shots/{shot['id']}/photos",
+                         files={"file": ("i1.jpg", io.BytesIO(b"jpg"), "image/jpeg")})
+        r = self.client.put(f"/impact-tests/{t['id']}/finish", json={})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["status"], "Completed")
+
+    def test_evidence_on_an_impact_is_frozen_after_review(self):
+        t = self._create()
+        shot = self.client.post(f"/impact-tests/{t['id']}/shots",
+                                json={"result": True}).json()
+        self._photo(t["id"])
+        self.client.put(f"/impact-tests/{t['id']}/finish", json={})
+        self.client.put(f"/impact-tests/{t['id']}/verdict",
+                        json={"test_result": "Pass", "verdict_by": "r",
+                              "retest_required": False})
+        r = self.client.post(f"/shots/{shot['id']}/photos",
+                             files={"file": ("late.jpg", io.BytesIO(b"jpg"),
+                                             "image/jpeg")})
+        self.assertEqual(r.status_code, 409)
+
     def test_completion_requires_at_least_one_impact(self):
         t = self._create()
         self._photo(t["id"])
