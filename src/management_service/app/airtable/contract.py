@@ -118,10 +118,17 @@ FIELDS = [
           note="§10.18 — 'Abborted' is misspelt in their base. LabOS sends their "
                "spelling verbatim, because a single-select will not accept ours."),
     Field("Test Result", CONDITIONAL, PRESENT, "single select",
-          options=["Pass", "Fail", "Inconclusive"],
+          options=["Pending", "Pass", "Fail", "Inconclusive"],
           option_wire={"Pass": "Passed", "Fail": "Failed"},
           note="§10.16 — CLOSED by the probe: the base holds Passed/Failed, so "
-               "their v2 example was right and this contract was wrong."),
+               "their v2 example was right and this contract was wrong. "
+               "'Pending' added 2026-09-07: contract §6 requires creation to "
+               "send it explicitly, and §4 keeps it until the first review. It "
+               "was absent here, so the create payload the contract mandates "
+               "was refused by our own validator for all five test types. "
+               "'Not Applicable' is deliberately still absent — §4 reserves it "
+               "for Airtable's own handling of unneeded work, and LabOS never "
+               "creates a row for a section it did not execute."),
     Field("Abort Reason", CONDITIONAL, ABSENT, "single select",
           options=["Specimen Failure", "Equipment Fault", "Operator Stop",
                    "Power/Comms Loss", "Other"],
@@ -282,6 +289,10 @@ ANSI_Z97 = "ANSI Z97.1"
 
 TEST_TYPES = (STATIC_LOAD, CYCLES, IMPACT, FORCED_ENTRY, ANSI_Z97)
 
+# The one Test Result value that is not a verdict. Creation sends it explicitly
+# (§6) and it survives the terminal write; only the first review replaces it.
+RESULT_PENDING = "Pending"
+
 IN_PROGRESS = "In Progress"
 COMPLETED = "Completed"
 ABORTED = "Aborted"
@@ -307,9 +318,31 @@ TERMINAL_STATUSES = (COMPLETED, ABORTED)
 REQUIRED_BY_TEST_TYPE = {
     STATIC_LOAD: ("Test Result", "Result Detail (JSON)"),
     CYCLES: ("Cycles Completed", "Test Result", "Result Detail (JSON)"),
-    IMPACT: ("Impact Result", "Test Result", "Result Detail (JSON)", "LabOS Photos"),
-    FORCED_ENTRY: ("Test Result", "Result Detail (JSON)", "LabOS Photos"),
-    ANSI_Z97: ("Test Result", "Result Detail (JSON)", "LabOS Photos"),
+    IMPACT: ("Impact Result", "Test Result", "Result Detail (JSON)"),
+    FORCED_ENTRY: ("Test Result", "Result Detail (JSON)"),
+    ANSI_Z97: ("Test Result", "Result Detail (JSON)"),
+}
+
+# Evidence a run cannot be *finished* without. Deliberately NOT part of the
+# terminal wire payload above, and the distinction is the whole point.
+#
+# Until 2026-09-07 `LabOS Photos` sat in the matrix above for all three manual
+# types, which made an upload a precondition for publishing the row. Attachments
+# are their own delivery channel by §6 — `outbox.ATTACHMENT`, whose docstring
+# says an attempt can be fully delivered while its photographs are still queued.
+# So the matrix asserted the opposite of the queue it feeds: an Impact attempt
+# could not reach Completed in Airtable until a file transfer unrelated to the
+# measurement had succeeded.
+#
+# The requirement was real, the placement was wrong. It belongs where the
+# operator is: the run-finish path checks that the evidence *exists* locally;
+# the attachment channel then delivers it, and an undelivered upload stays
+# visible as attachment backlog in /sync/status rather than blocking the result.
+#
+# Forced Entry and ANSI Z97.1 carry no photo requirement at all (IFET,
+# 2026-09-07): both are recorded as a pass/fail outcome.
+REQUIRED_EVIDENCE_BY_TEST_TYPE = {
+    IMPACT: ("LabOS Photos",),
 }
 
 # Always required, whatever the test type or status (§4.1).

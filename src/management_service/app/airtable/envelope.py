@@ -153,9 +153,22 @@ def build(values, *, status, live_options=None, allow_unreferenced_correction=Fa
     _require(present, C.ALWAYS_REQUIRED, "contract §4.1 / §5 always-required set")
 
     if status == C.IN_PROGRESS:
-        if "Test Result" in present:
+        # Contract §6: "Creation explicitly sends Test Result = Pending." Until
+        # 2026-09-07 this branch refused any Test Result at all, so the create
+        # payload the contract mandates could not be built for any of the five
+        # test types. What §4.3 actually forbids is a *verdict* before a review
+        # has happened — Pending is the absence of a verdict, not one.
+        #
+        # Defaulted rather than merely permitted, because a blank cell and a
+        # Pending cell read differently to a PM: blank says "nobody filled this
+        # in", Pending says "running, awaiting review". Their automations see
+        # the same difference.
+        present.setdefault("Test Result", C.RESULT_PENDING)
+        if present["Test Result"] != C.RESULT_PENDING:
             raise EnvelopeError(
-                "'Test Result' must be omitted while In Progress (contract §4.3)"
+                f"'Test Result' is {present['Test Result']!r} on an In Progress "
+                f"write; only {C.RESULT_PENDING!r} is permitted before the first "
+                "review (contract §4.3, §6)"
             )
     else:
         _require(present, C.TERMINAL_REQUIRED, "contract §4.5 terminal write")
@@ -228,9 +241,9 @@ def build(values, *, status, live_options=None, allow_unreferenced_correction=Fa
         if name == "Result Detail (JSON)":
             detail = value
             continue
-        # Their v2 table has no start/end pair — §10.13. Handled below.
-        if name in ("Testing Start Date", "Testing End Date"):
-            continue
+        # Both now have real dateTime columns (applied to the Testing Base
+        # 2026-09-06), so they fall through and are written like any other
+        # field. See the Test Date block below for what replaced §10.13.
 
         if field.kind in ("single select",) or (field.options and field.expected_live):
             value = _check_option(field, value, live_options)
@@ -245,16 +258,26 @@ def build(values, *, status, live_options=None, allow_unreferenced_correction=Fa
             # being silently dropped.
             overflow[_snake(name)] = value
 
-    # ---- the Test Date collapse (§10.13) -----------------------------------
+    # ---- Test Date means completion (§5) -----------------------------------
+    #
+    # §10.13 used to collapse the start/end pair into their single `Test Date`,
+    # because no start/end columns existed. Two of the fourteen fields applied
+    # on 2026-09-06 were exactly those columns, and this block was not updated
+    # with them: it went on skipping both real columns and stamping `Test Date`
+    # with the **start** instant.
+    #
+    # That is worse than a missing field. `Test Date` held a real, plausible,
+    # wrong timestamp — off by the duration of the test, with nothing on the row
+    # to reveal it. Contract §5 is unambiguous: Test Date is execution
+    # completion, omitted while running, and their automation derives the
+    # Protocol Section date from it. Corrected 2026-09-07.
     started = present.get("Testing Start Date")
     ended = present.get("Testing End Date")
     if started is not None:
-        wire["Test Date"] = _iso(started, "Testing Start Date")
-        overflow["testing_start_date"] = wire["Test Date"]
+        overflow["testing_start_date"] = _iso(started, "Testing Start Date")
     if ended is not None:
-        # Their single `Test Date` cannot hold this, so it goes in the JSON
-        # field and duration is computed rather than lost.
-        overflow["testing_end_date"] = _iso(ended, "Testing End Date")
+        wire["Test Date"] = _iso(ended, "Testing End Date")
+        overflow["testing_end_date"] = wire["Test Date"]
         if isinstance(started, _dt.datetime) and isinstance(ended, _dt.datetime):
             overflow["duration_s"] = int((ended - started).total_seconds())
 

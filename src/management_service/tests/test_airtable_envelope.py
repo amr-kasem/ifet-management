@@ -328,12 +328,30 @@ class SelectOptions(unittest.TestCase):
                            live_options=live)
 
 
-class TestDateCollapse(unittest.TestCase):
-    """§10.13 — one date field where the contract wants two."""
+class TestDates(unittest.TestCase):
+    """§5 — Test Date is completion, and the start/end pair has real columns.
 
-    def test_start_instant_goes_into_their_test_date(self):
-        w = build_start(base())
-        self.assertEqual(w["Test Date"], "2026-08-22T14:03:00Z")
+    These assertions were inverted until 2026-09-07. They encoded §10.13's
+    collapse, written when their table had no start/end pair: `Test Date` was
+    stamped with the **start** instant and both real columns were skipped. Two
+    of the fourteen fields applied on 2026-09-06 were exactly those columns,
+    and this suite went on asserting they must not be sent — so it stayed green
+    while the envelope published a timestamp that was wrong by the duration of
+    the test, on a field their automation derives the Protocol Section date from.
+    """
+
+    def test_test_date_is_omitted_while_running(self):
+        """§5: 'Test Date means execution completion, omitted while running.'"""
+        self.assertNotIn("Test Date", build_start(base()))
+
+    def test_both_real_columns_are_written(self):
+        w = build_terminal(completed())
+        self.assertEqual(w["Testing Start Date"], "2026-08-22T14:03:00Z")
+        self.assertEqual(w["Testing End Date"], "2026-08-22T14:33:20Z")
+
+    def test_start_column_is_written_on_create_too(self):
+        self.assertEqual(build_start(base())["Testing Start Date"],
+                         "2026-08-22T14:03:00Z")
 
     def test_end_time_is_preserved_in_the_json_valve(self):
         d = detail(build_terminal(completed()))["labos_extra"]
@@ -343,9 +361,10 @@ class TestDateCollapse(unittest.TestCase):
         d = detail(build_terminal(completed()))["labos_extra"]
         self.assertEqual(d["duration_s"], 1820)
 
-    def test_terminal_write_does_not_move_test_date_off_the_start(self):
-        self.assertEqual(build_terminal(completed())["Test Date"],
-                         build_start(base())["Test Date"])
+    def test_test_date_is_the_completion_instant_not_the_start(self):
+        w = build_terminal(completed())
+        self.assertEqual(w["Test Date"], "2026-08-22T14:33:20Z")
+        self.assertNotEqual(w["Test Date"], w["Testing Start Date"])
 
     def test_naive_datetime_refused(self):
         with self.assertRaises(EnvelopeError) as ctx:
@@ -440,7 +459,8 @@ class EndToEnd(unittest.TestCase):
         fields = body["records"][0]["fields"]
         self.assertEqual(fields["Airtable Mockup ID"], "recMockup123")
         self.assertEqual(fields["Test Status"], "Completed")
-        self.assertNotIn("Testing End Date", fields)
+        self.assertEqual(fields["Testing End Date"], "2026-08-22T14:33:20Z")
+        self.assertEqual(fields["Test Date"], fields["Testing End Date"])
 
 
 if __name__ == "__main__":

@@ -188,10 +188,24 @@ class EndToEnd(unittest.TestCase):
         wire = envelope.build(envelope_values(a), status=a.status)
         self.assertEqual(wire["Test Status"], "Abborted")         # §10.18
 
-    def test_in_progress_attempt_omits_the_result(self):
+    def test_in_progress_attempt_carries_pending_not_a_verdict(self):
+        """§6: 'Creation explicitly sends Test Result = Pending.'
+
+        This asserted the opposite until 2026-09-07, and the envelope agreed
+        with it, so the create payload the contract mandates could not be built
+        for any of the five test types. A blank cell and a Pending cell read
+        differently to a PM and to their automations: blank says nobody filled
+        it in, Pending says running and awaiting review.
+        """
         a = attempt(status="In Progress", test_result=None, testing_end_date=None)
         wire = envelope.build(envelope_values(a), status=a.status)
-        self.assertNotIn("Test Result", wire)
+        self.assertEqual(wire["Test Result"], "Pending")
+
+    def test_a_verdict_cannot_ride_along_on_an_in_progress_write(self):
+        """What §4.3 actually forbids: a verdict before a review exists."""
+        a = attempt(status="In Progress", test_result="Pass", testing_end_date=None)
+        with self.assertRaises(envelope.EnvelopeError):
+            envelope.build(envelope_values(a), status=a.status)
 
 
 class SyncEligibility(unittest.TestCase):
