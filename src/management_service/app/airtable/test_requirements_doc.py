@@ -268,7 +268,9 @@ QUESTIONS = [
      "what the Airtable team's views, groupings and automations see, and it needs one field added on their "
      "side — `Impact Number` — so a roll-up can count five impacts of one test rather than five tests. "
      "Confirm that is what you intend, because it is the half of the instruction that lands on somebody "
-     "else's base."),
+     "else's base.",
+     "**Confirmed 2026-09-08.** So `Impact Number` is being added to the Airtable schema, and the Airtable "
+     "team is told before the change goes to their production base."),
 ]
 
 
@@ -391,7 +393,9 @@ def build():
     w("**What you are not approving:** anything that changes a production rig. None of the three new")
     w("tests touch rig hardware, there is no firmware change in this work, and nothing is deployed.")
     w("")
-    w(f"**{WORDS[len(QUESTIONS)].capitalize()} answers are needed rather than a general yes** — they are listed after the five")
+    open_qs = len([q for q in QUESTIONS if len(q) < 3 or not q[2]])
+    w(f"**{WORDS[len(QUESTIONS)].capitalize()} answers are needed rather than a general yes** — "
+      f"**{WORDS[open_qs]} still open** — listed after the five")
     w("pages, and each is a place where we made a call you may not want.")
     w("")
     w("Approved by: ______________________________   Date: ______________")
@@ -533,9 +537,13 @@ def build():
     # -- page 7: the questions and the appendix ----------------------------
     w(f"## The {WORDS[len(QUESTIONS)]} answers we need")
     w("")
-    for i, (head, body) in enumerate(QUESTIONS, 1):
+    for i, question in enumerate(QUESTIONS, 1):
+        head, body, answer = (*question, None)[:3]
         w(f"**{i}. {head}.** {body}")
         w("")
+        if answer:
+            w(f"> {answer}")
+            w("")
     w("---")
     w("")
     w("## Appendix — five tests, nine requirement codes")
