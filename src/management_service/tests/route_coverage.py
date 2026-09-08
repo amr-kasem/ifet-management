@@ -60,4 +60,11 @@ for m, p in covered:
 for m, p in missed:
     print(f"  MISSED  {m:6} {p}")
 print(f"\n{len(covered)}/{len(new)} exercised")
-sys.exit(1 if missed else 0)
+# **Both conditions, not just coverage.** The exit code ignored `res` entirely,
+# so a run with failing tests and complete route coverage exited 0 — a gate that
+# passes while the thing it gates is broken.
+ok = not missed and res.wasSuccessful()
+if not res.wasSuccessful():
+    print(f"\n{len(res.failures)} failure(s) and {len(res.errors)} error(s) — "
+          "coverage is meaningless if the tests that provide it did not pass")
+sys.exit(0 if ok else 1)

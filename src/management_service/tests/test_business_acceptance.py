@@ -41,6 +41,11 @@ from sqlalchemy.orm import sessionmaker
 # Fields the contract withholds. None may ever reach a payload (§4.4, A2/A3).
 WITHHELD = ("Max Pressure Achieved", "Deflection Value", "Deflection Unit")
 
+def _now():
+    import datetime as dt
+    return dt.datetime.now(dt.timezone.utc)
+
+
 REC = {"project": "recPROJ0000000001", "mockup": "recMOCK0000000001",
        "protocol": "recPROT0000000001", "section": "recSECT0000000001"}
 
@@ -720,8 +725,15 @@ class ConcurrentStarts(_Base):
             s.rollback()
             s.close()
 
-    def test_two_simultaneous_starts_get_different_numbers(self):
-        """Through the real route, twice, with the retry doing the work."""
+    def test_sequential_starts_number_in_order(self):
+        """The ordinary case. **Not a concurrency test** — see the next one.
+
+        Three sequential HTTP calls exercise `next_attempt_number` and nothing
+        else: each sees the previous commit, so no collision ever occurs and the
+        retry loop is never entered. This was labelled a concurrency test until
+        2026-09-08, which is how a retry loop that crashed on its first
+        collision sat behind a passing suite.
+        """
         r = self.client.post("/projects/1/manual-tests/",
                              json={"type": "Forced Entry", "required_option": "g"})
         test_id = r.json()["id"]
@@ -732,6 +744,84 @@ class ConcurrentStarts(_Base):
             self.assertEqual(a.status_code, 200, a.text)
             numbers.append(a.json()["trial_number"])
         self.assertEqual(numbers, [1, 2, 3])
+
+    def test_a_real_collision_is_recovered_not_raised(self):
+        """Two starts that genuinely race, on separate connections.
+
+        A barrier makes both read `max(trial_number)` before either inserts, so
+        one *must* lose the unique constraint. That is the only way to reach
+        `insert_attempt`'s retry loop, and when it was first reached the loop
+        raised `InvalidRequestError` instead of retrying: exiting
+        `begin_nested()` on an exception already discards the pending object, so
+        the unconditional `session.expunge(obj)` failed.
+
+        Two threads and two connections, because a single session cannot race
+        itself and SQLAlchemy would serialise it.
+        """
+        import threading
+        from app.data.attempts import insert_attempt, next_attempt_number
+        from app.data.models import ManualTest, ManualTestResult
+
+        s = self.Session()
+        try:
+            s.add(ManualTest(id=1, project_id=1, type="Forced Entry",
+                             required_option="Grade 40", finished=False))
+            s.commit()
+        finally:
+            s.close()
+
+        barrier = threading.Barrier(2)
+        results, errors = [], []
+        # How many times the builders ran in total. Two threads that never
+        # collide run it twice; a real collision makes the loser build again.
+        # Asserted below, so this test cannot pass because the race failed to
+        # happen — which is the exact way the version it replaces was vacuous.
+        builds = []
+
+        def start(tag):
+            session = self.Session()
+            try:
+                def build():
+                    builds.append(tag)
+                    n = next_attempt_number(session, "raced-test-id")
+                    # Both threads hold this number before either inserts.
+                    # Only the first try waits: a retry must be free to read the
+                    # winner's committed row.
+                    if not getattr(build, "waited", False):
+                        build.waited = True
+                        barrier.wait(timeout=10)
+                    return ManualTestResult(
+                        manual_test_id=1, trial_number=n,
+                        labos_attempt_id=f"raced-{tag}-{n}",
+                        labos_test_id="raced-test-id",
+                        test_type="Forced Entry", status="In Progress",
+                        labos_created_at=_now(), labos_updated_at=_now())
+
+                obj = insert_attempt(session, build)
+                session.commit()
+                results.append(obj.trial_number)
+            except Exception as exc:                          # noqa: BLE001
+                errors.append(f"{tag}: {type(exc).__name__}: {exc}")
+                session.rollback()
+            finally:
+                session.close()
+
+        threads = [threading.Thread(target=start, args=(t,)) for t in ("a", "b")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        self.assertEqual(errors, [],
+                         "a lost race must be recovered by the retry loop, not "
+                         "raised at the caller")
+        self.assertEqual(sorted(results), [1, 2],
+                         "the loser must take the next number, not the same one")
+        self.assertGreater(
+            len(builds), 2,
+            f"the builders ran {len(builds)} times, so no collision occurred and "
+            "this test proved nothing about the retry loop. The barrier is not "
+            "forcing the race.")
 
 
 class TheProductionSender(_Base):

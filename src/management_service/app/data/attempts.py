@@ -204,7 +204,16 @@ def insert_attempt(session, build, *, max_retries=ALLOCATE_MAX_RETRIES):
             return obj
         except IntegrityError as exc:
             last_error = exc
-            session.expunge(obj)
+            # **Do not expunge unconditionally.** Exiting `begin_nested()` on an
+            # exception rolls the savepoint back, and that rollback already
+            # discards the pending insert — so `expunge` raised
+            # `InvalidRequestError: Instance ... is not present in this Session`
+            # *instead of* retrying. The constraint still prevented corruption,
+            # but a genuine collision became a 500 rather than attempt N+1,
+            # which is the whole point of this loop. Verified 2026-09-08: the
+            # builder ran once, not five times.
+            if obj in session:
+                session.expunge(obj)
     raise RuntimeError(
         "could not allocate an attempt number after "
         f"{max_retries} attempts"

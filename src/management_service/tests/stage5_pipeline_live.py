@@ -1,7 +1,8 @@
 """Stage 5 — the whole pipeline, live. Routes -> outbox -> real worker -> Airtable.
 
-    python3 -m tests.stage5_pipeline_live                       # dry run (default)
-    python3 -m tests.stage5_pipeline_live --live --approved-by "who, when"
+    python3 -m tests.stage5_pipeline_live --destroy-db m2
+    python3 -m tests.stage5_pipeline_live --destroy-db m2 --live \
+        --approved-by "who, when"
 
 **What this proves that stage 4 does not.** Stage 4 built payloads with the
 envelope and pushed them with the client: it tested the last two links of the
@@ -30,6 +31,10 @@ Safety, and none of it is a flag:
 3. **`--approved-by` is mandatory with `--live`** and echoed into the header.
 4. Rows are tagged `Operator Name = LABOS-PROBE` with `probe5-` test ids.
    LabOS never deletes; purging is an ask for the Airtable team.
+5. **`--destroy-db` is mandatory** and must name the database in the URL. This
+   script drops and recreates every table, and it did so on any PostgreSQL URL
+   including under dry run — refusing the production Airtable base does nothing
+   to protect a database. See `assert_disposable`.
 
 **Linkage here is synthetic and inserted directly**, which is the honest limit of
 this layer: it proves the *outbound* path given a linked job. It does not prove
@@ -86,8 +91,55 @@ class Report:
         return [(l, d) for l, ok, d in self.rows if not ok]
 
 
+# Database names that must never be handed to `drop_all`, whatever else is set.
+# `report_db` is what production and every developer compose file call it.
+FORBIDDEN_DB_NAMES = ("report_db",)
+
+
+def assert_disposable(url, named):
+    """Refuse to destroy a database that has not been positively identified.
+
+    **This guard was missing and the omission was dangerous.** `build_stack`
+    calls `Base.metadata.drop_all()`, and it ran on **any** PostgreSQL URL —
+    including under `--dry-run`, which reads as the safe mode. Refusing the
+    production *Airtable base* protects nothing here: the destructive act is
+    against the database.
+
+    Positive identification, not absence of evidence:
+
+    * the operator must name the database on the command line, and the name must
+      match the one in the URL — so a stale `M2_DATABASE_URL` pointing somewhere
+      unexpected fails rather than being wiped;
+    * `report_db` is refused outright, under any name match;
+    * a URL equal to the process's own `DATABASE_URL` is refused, because that
+      is by construction the application's real database.
+    """
+    from urllib.parse import urlparse
+    dbname = (urlparse(url).path or "").lstrip("/")
+    if not dbname:
+        return [f"cannot determine a database name from {url!r}"]
+    problems = []
+    if dbname in FORBIDDEN_DB_NAMES:
+        problems.append(
+            f"database {dbname!r} is a production/application name and is "
+            "refused outright")
+    if os.environ.get("DATABASE_URL") and url == os.environ["DATABASE_URL"]:
+        problems.append(
+            "this URL is the process's own DATABASE_URL — that is the "
+            "application's database, not a disposable one")
+    if named != dbname:
+        problems.append(
+            f"--destroy-db {named!r} does not match the database in the URL "
+            f"({dbname!r}). Name the database you intend to destroy.")
+    return problems
+
+
 def build_stack(url):
-    """Real schema, real routes, real session — on the harness database."""
+    """Real schema, real routes, real session — on the harness database.
+
+    Destructive: drops and recreates every table. Only reached after
+    `assert_disposable` has passed.
+    """
     from app import main
     from app.data.models import Base
     from fastapi.testclient import TestClient
@@ -178,12 +230,25 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--live", action="store_true")
     ap.add_argument("--approved-by", metavar="WHO")
+    ap.add_argument("--destroy-db", metavar="NAME", required=True,
+                    help="the database this will DROP and recreate; must match "
+                         "the database named in M2_DATABASE_URL")
     args = ap.parse_args(argv)
 
     url = os.environ.get("M2_DATABASE_URL")
     if not url or not url.startswith("postgresql"):
         print("ERROR: set M2_DATABASE_URL to the harness PostgreSQL URL.",
               file=sys.stderr)
+        return 2
+
+    # Before anything touches the schema, and before the dry-run branch —
+    # `--dry-run` used to drop every table too.
+    problems = assert_disposable(url, args.destroy_db)
+    if problems:
+        print("REFUSED: this would destroy a database that is not identified "
+              "as disposable:", file=sys.stderr)
+        for x in problems:
+            print(f"  - {x}", file=sys.stderr)
         return 2
 
     from app.config import airtable_settings
