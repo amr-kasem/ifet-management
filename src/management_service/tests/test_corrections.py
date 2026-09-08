@@ -390,5 +390,58 @@ class ItReachesTheOutbox(_Base):
         self.assertEqual(before, after)
 
 
+class ImpactNumberIsPublished(_Base):
+    """The field applied to their base on 2026-09-08 must actually be written.
+
+    It was created in the Testing Base, added to the register and the change
+    document, and **nothing wrote it** — the mapper had no key and
+    `envelope._resolve` would have refused one. A column nobody populates is the
+    speculative field the change document argues against, and we would have told
+    the Airtable team to count impacts with it.
+    """
+
+    def test_impact_publishes_its_impact_number(self):
+        test = self.impact_test()
+        first = self.start("/projects/1/impact-tests", test["id"])
+        shot = self.client.post(f"/test-results/{first['id']}/shots",
+                                json={"result": True})
+        self.assertEqual(shot.status_code, 200, shot.text)
+        photo = self.client.post(f"/shots/{shot.json()['id']}/photos",
+                                 files=_jpeg())
+        self.assertEqual(photo.status_code, 200, photo.text)
+        self.assertEqual(self.finish(first["id"], result=True).status_code, 200)
+
+        fields = self._payload(first["labos_attempt_id"], "create")
+        self.assertEqual(fields.get("Impact Number"), first["trial_number"])
+        self.assertEqual(fields.get("Attempt Number"), first["trial_number"])
+
+    def test_the_other_types_omit_it_rather_than_sending_zero(self):
+        """§5: an absent value is left out, never sent as 0 or blank."""
+        _test, first = self.recorded(None)
+        fields = self._payload(first["labos_attempt_id"], "create")
+        self.assertNotIn("Impact Number", fields)
+        self.assertEqual(fields.get("Test Type"), "Forced Entry")
+
+    def test_it_is_a_field_the_envelope_knows(self):
+        """A key the contract does not carry raises rather than publishing."""
+        from app.airtable import contract as C
+        self.assertIn("Impact Number", C.BY_LABOS_NAME)
+        self.assertIn("Impact Number", C.EXPECTED_LIVE)
+
+    def _payload(self, attempt_id, phase):
+        from app.sync.outbox import SyncOutbox
+        s = self.Session()
+        try:
+            row = (s.query(SyncOutbox)
+                   .filter(SyncOutbox.attempt_id == attempt_id,
+                           SyncOutbox.phase == phase)
+                   .first())
+            self.assertIsNotNone(row, f"nothing queued for {phase}")
+            payload = dict(row.payload or {})
+        finally:
+            s.close()
+        return payload.get("fields", payload)
+
+
 if __name__ == "__main__":                                   # pragma: no cover
     unittest.main()

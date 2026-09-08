@@ -90,6 +90,18 @@ FIELDS = [
     Field("LabOS Attempt ID", REQUIRED, PRESENT, "text",
           note="MERGE KEY — must be plain text, not a computed field"),
     Field("Attempt Number", REQUIRED, PRESENT, "number"),
+    # Applied to the Testing Base 2026-09-08 (`fldk52wf0SO9zYDjB`). Populated
+    # only for Impact, where one attempt is one impact, so it is CONDITIONAL and
+    # not REQUIRED — the other four types leave it absent from the payload
+    # entirely, which §5 turns into an unset cell rather than a zero.
+    #
+    # It duplicates `Attempt Number` for Impact by construction. That is the
+    # point: `Attempt Number` means "which attempt" for every type, and a
+    # consumer counting rows cannot tell that for Impact those rows are impacts
+    # of one test rather than five separate tests. This field is the axis that
+    # distinguishes them without a per-type rule on their side (§0.3).
+    Field("Impact Number", CONDITIONAL, PRESENT, "number",
+          note="Impact only — the impact ordinal; blank on the other four types"),
     Field("Schema Version", REQUIRED, PRESENT, "text", note="granted in v2"),
     Field("Corrects Attempt ID", CONDITIONAL, PRESENT, "text",
           note="APPLIED 2026-09-06 — no longer blocking. Automations must branch on this"),

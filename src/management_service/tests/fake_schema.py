@@ -61,6 +61,10 @@ RAW_DATA_FIELDS = [
     _f('Deflection Unit'),
     _f('Correction Reason', 'multilineText'),
     _f('Impact Result'),
+    # Applied to the live Testing Base 2026-09-08. The fake base has to carry it
+    # too, or the probe's "contract expects a field the base does not have"
+    # check fires on a field the real base does have.
+    _f('Impact Number', 'number'),
     _f('Complete LabOS JSON Response', 'multilineText'),
     _f('Notes', 'multilineText'),
     _f('Photos', 'url'),

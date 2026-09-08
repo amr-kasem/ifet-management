@@ -317,6 +317,16 @@ def envelope_values(attempt, *, strict=True):
         "LabOS Test ID": attempt.labos_test_id,
         "LabOS Attempt ID": attempt.labos_attempt_id,
         "Attempt Number": attempt.trial_number,
+        # **Impact only.** One attempt is one impact (§4.5a), so for Impact the
+        # attempt ordinal *is* the impact ordinal and this publishes it under
+        # its own name. Every other type omits the key, which §5 turns into an
+        # unset cell rather than a 0 — and a 0 here would read as "impact zero".
+        #
+        # Deliberately the same value as `Attempt Number` rather than a second
+        # counter: two ordinals that must agree is the redundancy §4.5a decided
+        # to contain, not to spread.
+        "Impact Number": (attempt.trial_number if attempt.test_type == C.IMPACT
+                          else None),
         "Schema Version": attempt.schema_version or C.CONTRACT_VERSION,
         "Corrects Attempt ID": attempt.corrects_attempt_id,
         "Correction Reason": attempt.correction_reason,
