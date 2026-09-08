@@ -183,9 +183,17 @@ def make_sender(client, settings, session_for=None):
                 content_hash=digest)
             return existing.get("id")
 
-        attachments = (response.get("fields") or {}).get(PHOTOS_FIELD) or []
-        landed = artifacts.find_existing_attachment(attachments, filename)
+        landed = artifacts.attachment_from_response(response, PHOTOS_FIELD,
+                                                   filename)
         attachment_id = (landed or {}).get("id")
+        if attachment_id is None:
+            # The upload returned 200 but we cannot identify what it created, so
+            # we cannot promise a later retry will recognise it. Flag rather
+            # than record a delivery we cannot prove.
+            outbox.mark_artifact_ambiguous(session, photo_id, entry.attempt_id)
+            raise AirtableValidationError(
+                f"the upload of {filename!r} returned no identifiable "
+                f"attachment: {sorted((response or {}).get('fields') or {})}")
         outbox.mark_artifact_delivered(
             session, photo_id, entry.attempt_id, airtable_record_id=record_id,
             attachment_id=attachment_id, content_hash=digest)

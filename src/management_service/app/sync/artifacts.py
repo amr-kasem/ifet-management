@@ -124,3 +124,28 @@ def find_existing_attachment(attachments, filename):
         if att.get("filename") == filename:
             return att
     return None
+
+
+def attachment_from_response(response, field, filename):
+    """Find our upload in the response, whichever key Airtable used.
+
+    **The upload endpoint returns the record keyed by field ID, not field name.**
+    Looking it up by name found nothing, so the upload succeeded — the file is on
+    the record — and the returned attachment id was never recorded. That is the
+    quiet half of a working feature: without the id, the next retry has nothing
+    to reconcile against and would attach the photograph a second time.
+
+    So: try the name, then the whole `fields` map, matching on our deterministic
+    filename. The filename is the identity here, which is the reason it carries
+    a content hash.
+    """
+    fields = (response or {}).get("fields") or {}
+    named = find_existing_attachment(fields.get(field), filename)
+    if named is not None:
+        return named
+    for value in fields.values():
+        if isinstance(value, list):
+            found = find_existing_attachment(value, filename)
+            if found is not None:
+                return found
+    return None

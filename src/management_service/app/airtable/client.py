@@ -263,8 +263,13 @@ class AirtableClient:
         import base64
 
         self._assert_may_write(table_id)
+        # **Percent-encode the field name.** `LabOS Photos` has a space in it,
+        # and a raw space in a request path is rejected before the request is
+        # even made ("URL can't contain control characters"). No stubbed client
+        # can catch this: the stub never builds a URL. Found by the first live
+        # upload, which is what a live layer exists for.
         url = (f"{CONTENT_ROOT}/{self.settings.base_id}/{record_id}/"
-               f"{field}/uploadAttachment")
+               f"{urllib.parse.quote(field, safe='')}/uploadAttachment")
         payload = {
             "contentType": content_type,
             "file": base64.b64encode(data).decode("ascii"),

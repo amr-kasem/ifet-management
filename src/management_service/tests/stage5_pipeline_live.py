@@ -61,16 +61,35 @@ MERGE_KEY = "LabOS Attempt ID"
 PROBE_OPERATOR = "LABOS-PROBE"
 WITHHELD = ("Max Pressure Achieved", "Deflection Value", "Deflection Unit")
 
-REC = {"project": "recPROBE5project1", "mockup": "recPROBE5mockup01",
-       "protocol": "recPROBE5protocol", "section": "recPROBE5section1"}
+# **Real records in the Testing base, not invented strings.** The fixture
+# hierarchy `IFET-FIXTURE-0001` was seeded by TA3 and read back here on
+# 2026-09-08. Fabricated ids (`recPROBE5project1`) proved only that Airtable
+# preserves a string: a result carrying them belongs to no hierarchy, so nothing
+# about linkage was actually demonstrated.
+REC = {"project": "reclD9DwtosvMGSI3",     # IFET-FIXTURE-0001
+       "mockup": "recclCv9R9AP5q9Vp",
+       "protocol": "recPqpWwDunfuXuL5"}
 
-# (label, kind, creation body, whether it records impacts)
+# One Protocol Section per requirement code, so each test type links to the
+# section that actually specifies it. Using one section for all five would
+# publish a Cycles result against the Forced Entry requirement.
+SECTIONS = {
+    "STATIC_PRESSURE": "recvT3l042dXflKBF",   # DP (+) (PSF)
+    "CYCLIC_PRESSURE": "recjHZf3kc6Nda3WU",   # Cyclic (PSF)
+    "IMPACT_LMI": "recIx0KsuxNX4bUOF",        # LMI (impacts)
+    "FORCED_ENTRY": "recVwSIEMXtezYa90",      # ASTM F588 Grade 40
+    "ANSI_IMPACT": "reclwbuXbjg5v7IJQ",       # Class A
+}
+
+# (label, kind, requirement code, creation body, records impacts)
 WORKFLOWS = (
-    ("Forced Entry", "manual", {"type": "Forced Entry",
-                                "required_option": "ASTM F588 Grade 40"}, False),
-    ("ANSI Z97.1", "manual", {"type": "ANSI Z97.1",
-                              "required_option": "Class A"}, False),
-    ("Impact", "impact", {}, True),
+    ("Static Load", "static", "STATIC_PRESSURE", {}, False),
+    ("Cycles", "cyclic", "CYCLIC_PRESSURE", {}, False),
+    ("Impact", "impact", "IMPACT_LMI", {}, True),
+    ("Forced Entry", "manual", "FORCED_ENTRY",
+     {"type": "Forced Entry", "required_option": "ASTM F588 Grade 40"}, False),
+    ("ANSI Z97.1", "manual", "ANSI_IMPACT",
+     {"type": "ANSI Z97.1", "required_option": "Class A"}, False),
 )
 
 
@@ -189,27 +208,92 @@ def seed(Session):
         s.close()
 
 
-def link(Session, table, test_id):
+def link(Session, table, test_id, code, operator=None):
+    """Bind a local test to the fixture's protocol and the section for `code`.
+
+    Assigning the ids directly is this layer's deliberate shortcut — it proves
+    the outbound path *given* a linked job. The ids themselves are real, so a
+    published result genuinely attaches to the fixture hierarchy; what is not
+    proven is the importer that would have set them, which does not exist.
+    Layer 3 may not take this shortcut.
+    """
     s = Session()
     try:
         s.execute(sa.text(
-            f"UPDATE {table} SET airtable_protocol_id=:p, airtable_section_id=:x, "
-            "airtable_section_name=:n WHERE id=:i"),
-            {"p": REC["protocol"], "x": REC["section"],
-             "n": "Probe section", "i": test_id})
+            f"UPDATE {table} SET airtable_protocol_id=:p, airtable_section_id=:x,"
+            " airtable_section_name=:n, operator_name=:op WHERE id=:i"),
+            {"p": REC["protocol"], "x": SECTIONS[code], "n": code,
+             "op": operator, "i": test_id})
         s.commit()
     finally:
         s.close()
 
 
-def run_workflow(client, Session, kind, body, with_shots):
+RIG_SQL = {
+    "static": ("static_tests",
+               "INSERT INTO static_tests (id, finished, index, pressure_factor,"
+               " pressure, duration, type, preset, project_id) VALUES "
+               "(:i, false, :idx, '0.75', 45.0, 10, 'static', false, 1)"),
+    "cyclic": ("cyclic_tests",
+               "INSERT INTO cyclic_tests (id, finished, index, type, cycles,"
+               " low_pressure, high_pressure, resume, current_cycle, preset,"
+               " project_id) VALUES "
+               "(:i, false, :idx, 'cyclic', 1000, 30.0, 60.0, false, 640,"
+               " false, 1)"),
+}
+
+
+def run_rig_workflow(client, Session, kind, code, index):
+    """Static and Cycles: the rig posts a finished stage in one call.
+
+    Included because stage 5 covered three of five types, and the two it omitted
+    are the ones whose lifecycle was broken — an acceptance run over the manual
+    types alone would have passed while Static and Cycles never queued a
+    terminal at all.
+    """
+    table, sql = RIG_SQL[kind]
+    s = Session()
+    try:
+        s.execute(sa.text(sql), {"i": index + 1, "idx": index})
+        s.commit()
+    finally:
+        s.close()
+    link(Session, table, index + 1, code, operator=PROBE_OPERATOR)
+
+    path = "static_tests" if kind == "static" else "cyclic-tests"
+    # Deliberately `deflections` alone — exactly what production firmware sends.
+    # It completes because the operator was declared at run start.
+    r = client.post(f"/projects/1/{path}/{index}/trials", json={
+        "deflections": [{"deflection_gauge": "g1", "max_deflection": 1234.0,
+                         "permanent_deflection": 12.0, "recovery": 60.0}]})
+    r.raise_for_status()
+
+    from app.data.models import TestResult
+    s = Session()
+    try:
+        row = (s.query(TestResult)
+               .order_by(TestResult.id.desc()).first())
+        attempt = {"id": row.id, "labos_attempt_id": row.labos_attempt_id,
+                   "labos_test_id": row.labos_test_id,
+                   "trial_number": row.trial_number}
+    finally:
+        s.close()
+    # A rig stage carries no operator review yet; give it one so the verdict
+    # phase is exercised for these types too.
+    client.put(f"/test-results/{attempt['id']}/verdict",
+               json={"test_result": "Pass", "verdict_by": "LABOS-PROBE-reviewer",
+                     "retest_required": False}).raise_for_status()
+    return index + 1, attempt, path
+
+
+def run_workflow(client, Session, kind, code, body, with_shots):
     """Through the real routes: create -> start -> evidence -> finish -> review."""
     path = "impact-tests" if kind == "impact" else "manual-tests"
     table = "missile_impact_tests" if kind == "impact" else "manual_tests"
     r = client.post(f"/projects/1/{path}/", json=body)
     r.raise_for_status()
     test_id = r.json()["id"]
-    link(Session, table, test_id)
+    link(Session, table, test_id, code)
 
     a = client.post(f"/projects/1/{path}/{test_id}/trials",
                     json={"operator_name": PROBE_OPERATOR})
@@ -298,8 +382,13 @@ def main(argv=None):
 
     # -- the local half: every workflow through the real routes -------------
     produced = {}
-    for label, kind, body, with_shots in WORKFLOWS:
-        test_id, attempt, path = run_workflow(client, Session, kind, body, with_shots)
+    for index, (label, kind, code, body, with_shots) in enumerate(WORKFLOWS):
+        if kind in RIG_SQL:
+            test_id, attempt, path = run_rig_workflow(
+                client, Session, kind, code, index)
+        else:
+            test_id, attempt, path = run_workflow(
+                client, Session, kind, code, body, with_shots)
         s = Session()
         try:
             entries = (s.query(outbox.SyncOutbox)
@@ -314,7 +403,7 @@ def main(argv=None):
         ok = record == ["create", "terminal", "verdict"]
         report.record(f"{label}: routes queued create/terminal/verdict", ok,
                       f"queued {record} + {len(attach)} attachment(s)")
-        produced[label] = (test_id, attempt, path)
+        produced[label] = (test_id, attempt, path, code)
 
     if not args.live:
         print()
@@ -326,15 +415,23 @@ def main(argv=None):
 
     # -- delivery, with the production sender ------------------------------
     at = AirtableClient(settings=airtable_settings)
-    send = service.make_sender(at, airtable_settings)
-    s = Session()
-    try:
-        worker.drain(s, send)
-    finally:
-        s.close()
+    holder = {}
+    # The real production sender, with database access so it can deliver
+    # attachments — the same function `service.main()` builds.
+    send = service.make_sender(at, airtable_settings,
+                               session_for=lambda entry: holder.get("session"))
+    # Several cycles: an attachment defers until its attempt's create has
+    # landed, so one drain is not enough by design.
+    for _ in range(4):
+        s = Session()
+        holder["session"] = s
+        try:
+            worker.drain(s, send)
+        finally:
+            s.close()
     print()
 
-    for label, (test_id, attempt, path) in produced.items():
+    for label, (test_id, attempt, path, code) in produced.items():
         aid = attempt["labos_attempt_id"]
         rows = fetch(at, aid)
         if len(rows) != 1:
@@ -347,7 +444,8 @@ def main(argv=None):
             f.get("Airtable Project ID") == REC["project"]
             and f.get("Airtable Mockup ID") == REC["mockup"]
             and f.get("Airtable Protocol ID") == REC["protocol"]
-            and f.get("Airtable Section ID") == REC["section"]
+            # The section for THIS requirement code, not just any section.
+            and f.get("Airtable Section ID") == SECTIONS[code]
             and f.get("LabOS Test ID") == attempt["labos_test_id"]
             and f.get(MERGE_KEY) == aid
             and f.get("Attempt Number") == attempt["trial_number"])
@@ -370,12 +468,34 @@ def main(argv=None):
         report.record(f"{label}: withheld measurements absent", not present,
                       "absent" if not present else f"PRESENT: {present}")
 
+        # Photographs, where the workflow produced any.
+        s = Session()
+        try:
+            rows = (s.query(outbox.SyncArtifactDelivery)
+                    .filter(outbox.SyncArtifactDelivery.attempt_id == aid).all())
+            delivered = [r for r in rows if r.airtable_attachment_id]
+            flagged = [r for r in rows if r.needs_reconciliation]
+        finally:
+            s.close()
+        if rows:
+            attached = f.get("LabOS Photos") or []
+            ok = (len(delivered) == len(rows) and not flagged
+                  and len(attached) >= len(rows))
+            report.record(f"{label}: photographs attached to the record", ok,
+                          f"{len(delivered)}/{len(rows)} delivered · "
+                          f"{len(attached)} on the record · "
+                          f"{len(flagged)} awaiting reconciliation")
+
     # -- retry: the same attempt must update the same row -------------------
-    label, (test_id, attempt, path) = next(iter(produced.items()))
+    # Forced Entry explicitly, not "the first workflow": the first is now a rig
+    # type whose retest is posted by the rig rather than started by an operator.
+    label = "Forced Entry"
+    test_id, attempt, path, code = produced[label]
     aid = attempt["labos_attempt_id"]
     before = fetch(at, aid)[0]["id"]
     s = Session()
     try:
+        holder["session"] = s
         entry = (s.query(outbox.SyncOutbox)
                  .filter(outbox.SyncOutbox.attempt_id == aid,
                          outbox.SyncOutbox.phase == "verdict").first())
@@ -394,11 +514,13 @@ def main(argv=None):
     second = second.json()
     client.put(f"/test-results/{second['id']}/finish",
                json={"result": False, "testing_continued": "Stopped"})
-    s = Session()
-    try:
-        worker.drain(s, send)
-    finally:
-        s.close()
+    for _ in range(3):
+        s = Session()
+        holder["session"] = s
+        try:
+            worker.drain(s, send)
+        finally:
+            s.close()
 
     rows2 = fetch(at, second["labos_attempt_id"])
     rows1 = fetch(at, aid)
@@ -414,37 +536,32 @@ def main(argv=None):
                   f"{rows2[0]['id']} number="
                   f"{rows2[0]['fields'].get('Attempt Number')}")
 
-    # -- attachments: the honest result ------------------------------------
+    # -- attachments: delivered, or the exact reason not ---------------------
     s = Session()
+    holder["session"] = s
     try:
-        parked = (s.query(outbox.SyncOutbox)
-                  .filter(outbox.SyncOutbox.phase == "attachment",
-                          outbox.SyncOutbox.state == outbox.PARKED).count())
-        total = (s.query(outbox.SyncOutbox)
-                 .filter(outbox.SyncOutbox.phase == "attachment").count())
+        entries = (s.query(outbox.SyncOutbox)
+                   .filter(outbox.SyncOutbox.phase == "attachment").all())
+        rows = s.query(outbox.SyncArtifactDelivery).all()
+        delivered = [r for r in rows if r.airtable_attachment_id]
+        flagged = [r for r in rows if r.needs_reconciliation]
         from app.sync import state as sync_state
         status = sync_state.status(s)
+        states = {}
+        errors = set()
+        for e in entries:
+            states[e.state] = states.get(e.state, 0) + 1
+            if e.last_error:
+                errors.add(e.last_error[:160])
     finally:
         s.close()
-    # **Not `parked == total`.** `worker.drain` stops when a cycle makes no
-    # progress, and it claims at most one head per attempt per channel — so a
-    # single drain parks the head of each attachment queue and leaves the rest
-    # pending. That is correct: an attachment channel whose head will never
-    # succeed should not be spun through on every cycle.
-    #
-    # What must hold is the property, not the count: every attachment that was
-    # actually attempted parked with the uploader-missing reason, no RECORD
-    # phase parked, and the headline status is not dragged to Retry Required by
-    # a capability we have not built.
-    attempted_ok = parked >= 1 and status["attachment_parked"] == parked
-    channel_ok = status["parked"] == 0 and status["status"] != "Retry Required"
-    report.record("attachments park visibly without pinning the status",
-                  total > 0 and attempted_ok and channel_ok,
-                  f"{parked} of {total} attachment entries parked (drain stops on "
-                  f"no progress; the rest stay pending) · headline "
-                  f"{status['status']!r} · record-channel parked="
-                  f"{status['parked']} · attachment_parked="
-                  f"{status['attachment_parked']}")
+
+    ok = (entries and len(delivered) == len(entries) and not flagged)
+    report.record(
+        "photographs are delivered, not merely queued", ok,
+        f"{len(delivered)}/{len(entries)} delivered · entry states {states} · "
+        f"{len(flagged)} awaiting reconciliation · headline "
+        f"{status['status']!r}" + (f" · errors: {sorted(errors)}" if errors else ""))
 
     print()
     print("=" * 72)
