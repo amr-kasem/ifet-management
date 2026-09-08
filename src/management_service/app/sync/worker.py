@@ -37,7 +37,7 @@ class Result:
     """What one cycle did. Returned rather than logged so tests can assert."""
 
     __slots__ = ("delivered", "superseded", "failed", "parked", "claimed",
-                 "discarded")
+                 "discarded", "deferred")
 
     def __init__(self):
         self.delivered = 0
@@ -49,6 +49,9 @@ class Result:
         # rather than logged, because "we sent and then discarded the result"
         # is a thing an operator may need to see.
         self.discarded = 0
+        # Attachments waiting on their record to exist. Neither delivered
+        # nor failed — a wait, and counted as one.
+        self.deferred = 0
 
     def __repr__(self):
         return (f"Result(claimed={self.claimed} delivered={self.delivered} "
@@ -113,6 +116,20 @@ def run_cycle(session, send, *, limit=10, now=None,
 
         try:
             record_id = send(entry)
+        except outbox.AttachmentDeferred:
+            # Not a failure: the record this attachment belongs to has not been
+            # created in Airtable yet. Release the lease and leave the entry
+            # pending, so it is retried on a later cycle. Parking it would need
+            # a human to un-park something that was about to work on its own,
+            # and counting it as a failure would burn one of its attempts.
+            if not outbox.owns(session, entry, epoch):
+                result.discarded += 1
+                continue
+            entry.leased_until = None
+            entry.state = outbox.PENDING
+            entry.updated_at = now
+            result.deferred += 1
+            continue
         except TERMINAL_ERRORS as exc:
             if not outbox.owns(session, entry, epoch):
                 result.discarded += 1

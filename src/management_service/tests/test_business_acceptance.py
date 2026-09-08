@@ -51,7 +51,22 @@ REC = {"project": "recPROJ0000000001", "mockup": "recMOCK0000000001",
 
 
 def _jpeg(name="evidence.jpg"):
-    return {"file": (name, io.BytesIO(b"jpegbytes"), "image/jpeg")}
+    """A **real** JPEG, not `b"jpegbytes"`.
+
+    The uploader downscales every photograph before sending it, so a fixture
+    that is not a decodable image tests the refusal path and nothing else. It
+    was literal `b"jpegbytes"` until the uploader existed, which is why
+    "attachments park" read as failure isolation rather than a missing
+    capability.
+    """
+    return {"file": (name, io.BytesIO(_jpeg_bytes()), "image/jpeg")}
+
+
+def _jpeg_bytes(size=(64, 48), colour=(180, 40, 40)):
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", size, colour).save(buf, format="JPEG", quality=80)
+    return buf.getvalue()
 
 
 def _client_and_session():
@@ -866,97 +881,219 @@ class ConcurrentStarts(_Base):
 
 
 class TheProductionSender(_Base):
-    """What the real `service.send` does — the one path a fake sender hides.
+    """The real `service.make_sender`, with the client stubbed at its boundary.
 
-    Every suite here and in `test_sync_concurrency` injects a transport that
-    accepts any payload. That is right for testing the queue, and it is exactly
-    why a defect in the *production* sender survived: it sent every phase
-    through `upsert_records` without looking at `entry.phase`, so live, an
-    attachment payload — which carries a `photo` object, not Airtable fields —
-    would have been rejected as an unknown field. A 422 is terminal, so every
-    photograph would have parked on first contact.
-
-    So the production sender's own decisions get tested directly, with the
-    client stubbed at the boundary rather than the sender replaced.
+    Every other suite injects a sender that accepts any payload. That is right
+    for testing the queue, and it is how a sender that ignored `entry.phase` —
+    and would have had Airtable reject every photograph as an unknown field —
+    passed 270 tests. So the production sender's own decisions are tested here,
+    by stubbing the client rather than replacing the sender.
     """
 
-    def _sender(self, calls):
-        """**The production sender itself**, wired to a stub client.
+    class StubClient:
+        """Records what was asked of Airtable. Fails on demand."""
 
-        `service.make_sender(client, settings)` — the same function `main()`
-        calls. This test used to hold a copy of that closure and assert, by
-        scanning the source, that the copy still matched; a test of a
-        resemblance rather than of the code. That shape is what let the
-        phase-blind sender through in the first place, so the copy is gone.
-        """
+        def __init__(self, upload_raises=None, remote_attachments=None):
+            self.upserts = []
+            self.uploads = []
+            self.attachment_reads = 0
+            self.upload_raises = upload_raises
+            self.remote_attachments = remote_attachments or []
+
+        def upsert_records(self, table_id, records, **kw):
+            self.upserts.append((table_id, records))
+            return {"records": [{"id": "recRECORD00000001"}]}
+
+        def upload_attachment(self, table_id, record_id, field, filename, data,
+                              content_type="image/jpeg"):
+            self.uploads.append({"record": record_id, "field": field,
+                                 "filename": filename, "bytes": len(data),
+                                 "content_type": content_type})
+            if self.upload_raises:
+                raise self.upload_raises
+            return {"fields": {field: [{"id": "attUPLOADED00001",
+                                        "filename": filename}]}}
+
+        def record_attachments(self, table_id, record_id, field):
+            self.attachment_reads += 1
+            return self.remote_attachments
+
+    class StubSettings:
+        results_table = "tblSTUB"
+
+    def _sender(self, client, session):
         from app.sync import service
+        return service.make_sender(client, self.StubSettings(),
+                                   session_for=lambda entry: session)
 
-        class StubClient:
-            def upsert_records(self, table_id, records, **kw):
-                calls.append((table_id, records))
-                return {"records": [{"id": "recSTUB0000000001"}]}
-
-        class StubSettings:
-            results_table = "tblSTUB"
-
-        return service.make_sender(StubClient(), StubSettings())
-
-    def test_an_attachment_parks_with_a_truthful_reason_and_no_request(self):
-        from app.sync import outbox, worker
+    def _attempt_with_photos(self, count=1):
         r = self.client.post("/projects/1/manual-tests/",
                              json={"type": "Forced Entry", "required_option": "g"})
         test_id = r.json()["id"]
         self.link_test("manual_tests", test_id)
         a = self.client.post(f"/projects/1/manual-tests/{test_id}/trials",
                              json={"operator_name": "technician-1"}).json()
-        self.client.post(f"/test-results/{a['id']}/photos", files=_jpeg())
-
-        calls = []
-        s = self.Session()
-        try:
-            worker.drain(s, self._sender(calls))
-            entries = {e.phase: e for e in s.query(outbox.SyncOutbox).all()}
-        finally:
-            s.close()
-
-        self.assertEqual(entries["create"].state, "done")
-        self.assertEqual(entries["attachment"].state, "parked",
-                         "an unimplemented capability must park, not retry forever")
-        self.assertIn("not implemented", entries["attachment"].last_error)
-        # And no malformed request was ever made.
-        self.assertEqual([r for _, recs in calls for r in recs
-                          if "photo" in r], [],
-                         "an attachment payload must never be sent as record fields")
-
-    def test_a_parked_attachment_does_not_pin_the_headline_status(self):
-        """§6: evidence delivery is tracked separately from the result."""
-        from app.sync import outbox, worker
-        r = self.client.post("/projects/1/manual-tests/",
-                             json={"type": "Forced Entry", "required_option": "g"})
-        test_id = r.json()["id"]
-        self.link_test("manual_tests", test_id)
-        a = self.client.post(f"/projects/1/manual-tests/{test_id}/trials",
-                             json={"operator_name": "technician-1"}).json()
-        self.client.post(f"/test-results/{a['id']}/photos", files=_jpeg())
+        for i in range(count):
+            self.client.post(f"/test-results/{a['id']}/photos",
+                             files=_jpeg(f"p{i}.jpg"))
         self.client.put(f"/test-results/{a['id']}/finish",
                         json={"result": True, "testing_continued": "Stopped"})
-        self.client.put(f"/test-results/{a['id']}/verdict",
-                        json={"test_result": "Pass", "verdict_by": "reviewer-1",
-                              "retest_required": False})
+        return a["labos_attempt_id"], a["id"]
 
+    def _attachment_entry(self, session, attempt_id):
+        from app.sync.outbox import SyncOutbox
+        return (session.query(SyncOutbox)
+                .filter(SyncOutbox.attempt_id == attempt_id,
+                        SyncOutbox.phase == "attachment").one())
+
+    def test_a_photograph_is_uploaded_as_a_preview_and_recorded(self):
+        from app.sync import artifacts, outbox, worker
+        aid, _ = self._attempt_with_photos()
+        client = self.StubClient()
         s = self.Session()
         try:
-            worker.drain(s, self._sender([]))
-            body = __import__("app.sync.state", fromlist=["state"]).status(s)
+            worker.drain(s, self._sender(client, s))
+            entry = self._attachment_entry(s, aid)
+            photo_id = entry.payload["photo"]["id"]
+            row = s.get(outbox.SyncArtifactDelivery, photo_id)
+            self.assertEqual(entry.state, "done")
+            self.assertEqual(row.airtable_attachment_id, "attUPLOADED00001",
+                             "the id Airtable returned must be recorded — it is "
+                             "what makes an ambiguous retry safe")
+            self.assertIsNotNone(row.content_hash)
+            self.assertFalse(row.needs_reconciliation)
         finally:
             s.close()
 
-        self.assertEqual(body["parked"], 0,
-                         "no RECORD phase is parked, so the headline must not "
-                         "say Retry Required and hide the next real failure")
-        self.assertEqual(body["attachment_parked"], 1,
-                         "but the stuck evidence must stay visible")
-        self.assertGreaterEqual(body["attachment_backlog"], 1)
+        self.assertEqual(len(client.uploads), 1)
+        up = client.uploads[0]
+        self.assertEqual(up["field"], "LabOS Photos")
+        self.assertEqual(up["content_type"], "image/jpeg")
+        self.assertEqual(up["record"], "recRECORD00000001",
+                         "attached to the record the create phase produced")
+        # A preview, not the original: a deterministic name carrying the hash.
+        self.assertTrue(up["filename"].startswith(f"labos-{photo_id}-"))
+        self.assertTrue(up["filename"].endswith(".jpg"))
+        self.assertLessEqual(up["bytes"], artifacts.PREVIEW_MAX_BYTES)
+
+    def test_the_preview_filename_is_deterministic_for_the_same_bytes(self):
+        """Why it matters: a retry must recognise its own file on the record."""
+        from app.sync import artifacts
+        data = _jpeg_bytes()
+        one = artifacts.preview_filename(7, artifacts.content_hash(data))
+        two = artifacts.preview_filename(7, artifacts.content_hash(data))
+        self.assertEqual(one, two)
+        other = artifacts.preview_filename(
+            7, artifacts.content_hash(_jpeg_bytes(colour=(10, 90, 200))))
+        self.assertNotEqual(one, other,
+                            "different content must produce a different name, "
+                            "or reconciliation cannot tell them apart")
+
+    def test_an_attachment_waits_for_its_record_rather_than_parking(self):
+        """No record in Airtable yet is a wait, not a failure.
+
+        The channels are independent by design, so an attachment can be claimed
+        before its attempt's `create` has landed. Parking it would need a human
+        to un-park something that was about to work on its own, and failing it
+        would burn one of its retry attempts.
+        """
+        from app.sync import outbox, worker
+        aid, _ = self._attempt_with_photos()
+        client = self.StubClient()
+        s = self.Session()
+        try:
+            # Park the record phases so only the attachment is claimable, with
+            # no Airtable record yet in existence.
+            for e in (s.query(outbox.SyncOutbox)
+                      .filter(outbox.SyncOutbox.attempt_id == aid).all()):
+                if e.phase != "attachment":
+                    e.state = outbox.PARKED
+            s.commit()
+            result = worker.run_cycle(s, self._sender(client, s))
+            entry = self._attachment_entry(s, aid)
+            s.refresh(entry)
+            state, attempts_used = entry.state, entry.attempts
+        finally:
+            s.close()
+        self.assertEqual(result.deferred, 1)
+        self.assertEqual(state, "pending", "deferred, not parked and not failed")
+        self.assertEqual(attempts_used, 0,
+                         "a wait must not burn one of its retry attempts")
+        self.assertEqual(client.uploads, [])
+
+    def test_a_lost_response_is_reconciled_not_re_uploaded(self):
+        """§6: reconcile the remote attachments; never blindly append.
+
+        The upload left, the answer did not. If our own preview is on the record
+        the upload *did* land — record it and finish. Re-sending would attach the
+        same photograph twice.
+        """
+        from app.airtable.errors import AirtableTransportError
+        from app.sync import artifacts, outbox, worker
+        aid, _ = self._attempt_with_photos()
+
+        s = self.Session()
+        try:
+            entry = self._attachment_entry(s, aid)
+            photo = dict(entry.payload["photo"])
+            # The exact preview name the sender will use.
+            _, filename, _ = artifacts.build_preview(photo["path"], photo["id"])
+            client = self.StubClient(
+                upload_raises=AirtableTransportError("connection reset"),
+                remote_attachments=[{"id": "attALREADYTHERE1",
+                                     "filename": filename}])
+            worker.drain(s, self._sender(client, s))
+            s.refresh(entry)
+            state = entry.state
+            row = s.get(outbox.SyncArtifactDelivery, photo["id"])
+            landed, flagged = row.airtable_attachment_id, row.needs_reconciliation
+        finally:
+            s.close()
+
+        self.assertEqual(client.attachment_reads, 1,
+                         "the remote state must be read, not assumed")
+        self.assertEqual(landed, "attALREADYTHERE1")
+        self.assertFalse(flagged,
+                         "resolved, because the file was found on the record")
+        self.assertEqual(state, "done")
+        self.assertEqual(len(client.uploads), 1,
+                         "exactly one upload attempt — never a second")
+
+    def test_a_lost_response_with_nothing_on_the_record_retries(self):
+        """The other half: absent means retry, and stays flagged meanwhile.
+
+        §6 — a single immediate absent read is not proof of failure, so the
+        artifact stays flagged for reconciliation and the entry retries after
+        its backoff rather than being closed either way.
+        """
+        from app.airtable.errors import AirtableTransportError
+        from app.sync import outbox, state as sync_state, worker
+        aid, _ = self._attempt_with_photos()
+        client = self.StubClient(
+            upload_raises=AirtableTransportError("connection reset"),
+            remote_attachments=[])
+        s = self.Session()
+        try:
+            worker.drain(s, self._sender(client, s))
+            entry = self._attachment_entry(s, aid)
+            row = s.get(outbox.SyncArtifactDelivery, entry.payload["photo"]["id"])
+            state, flagged = entry.state, row.needs_reconciliation
+            status = sync_state.status(s)
+        finally:
+            s.close()
+        self.assertIn(state, ("pending", "parked"))
+        self.assertTrue(flagged,
+                        "an unresolved ambiguous upload must stay flagged")
+        self.assertGreaterEqual(status["artifacts_needing_reconciliation"], 1,
+                                "and must be visible in sync status")
+
+    def test_a_missing_original_names_the_compose_mount(self):
+        """The worker's uploads volume, as an error message not a mystery."""
+        from app.sync import artifacts
+        with self.assertRaises(artifacts.PreviewError) as caught:
+            artifacts.build_preview("/nonexistent/photo.jpg", 1)
+        self.assertIn("uploads volume", str(caught.exception))
+
 
 
 class ArtifactDeliveryIsTrackedPerPhotograph(_Base):

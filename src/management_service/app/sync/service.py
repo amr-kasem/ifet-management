@@ -28,7 +28,9 @@ import signal
 import sys
 import time
 
-from ..airtable.errors import AirtableValidationError
+from ..airtable.errors import (AirtableTransportError,
+                              AirtableValidationError)
+from . import artifacts
 from . import outbox
 from . import singleton
 from . import worker as sync_worker
@@ -61,7 +63,8 @@ class Stopping:
         self.requested = True
 
 
-def run(session_factory, send, *, slot_engine, idle_interval=DEFAULT_IDLE_INTERVAL,
+def run(session_factory, send, *, slot_engine, session_holder=None,
+        idle_interval=DEFAULT_IDLE_INTERVAL,
         busy_interval=DEFAULT_BUSY_INTERVAL, stopping=None, max_cycles=None,
         sleep=time.sleep):
     """The loop. Injected everywhere, so the tests drive it without a network.
@@ -78,6 +81,12 @@ def run(session_factory, send, *, slot_engine, idle_interval=DEFAULT_IDLE_INTERV
             if max_cycles is not None and cycles >= max_cycles:
                 break
             session = session_factory()
+            # The attachment sender needs this cycle's session: it reads the
+            # attempt's Airtable record id and records what it delivered. Passed
+            # through a holder rather than a new sender per cycle, so `send`
+            # stays one function the tests can call directly.
+            if session_holder is not None:
+                session_holder["session"] = session
             try:
                 result = sync_worker.run_cycle(session, send)
             except Exception:
@@ -104,7 +113,15 @@ def run(session_factory, send, *, slot_engine, idle_interval=DEFAULT_IDLE_INTERV
     return cycles
 
 
-def make_sender(client, settings):
+PHOTOS_FIELD = "LabOS Photos"
+
+
+# Defined in `outbox` — see its docstring for why the queue owns this and not
+# the transport. Re-exported so a reader of the sender finds it here.
+AttachmentDeferred = outbox.AttachmentDeferred
+
+
+def make_sender(client, settings, session_for=None):
     """The production sender, as a value rather than a closure.
 
     **Extracted so it can be tested rather than imitated.** It lived inside
@@ -114,37 +131,88 @@ def make_sender(client, settings):
     thing that let a real defect through: the sender ignored `entry.phase` and
     would have PATCHed every attachment payload as record fields.
 
-    Now `main()` and the live pipeline probe call the same function.
+    `session_for(entry)` yields the session the worker is using, so the
+    attachment path can read the attempt's Airtable record id and record what it
+    delivered. The worker passes its own session; a caller that only sends
+    record phases may omit it.
     """
 
+    def _record_id(session, attempt_id):
+        state = session.get(outbox.SyncAttemptState, attempt_id)
+        return state.airtable_record_id if state else None
+
+    def _send_attachment(entry, session):
+        """One photograph -> one preview -> one direct upload.
+
+        The ambiguous case is the one worth reading. An upload whose response is
+        lost may or may not have attached the file, and §6 forbids both blindly
+        re-appending and treating a single absent read as proof of failure. So
+        the outcome is: read the record's attachments, and if our own
+        deterministic filename is there, the upload *did* land — record it and
+        finish. If it is not, flag the artifact for reconciliation and raise, so
+        the entry retries after its backoff rather than duplicating the file.
+        """
+        photo = (entry.payload or {}).get("photo") or {}
+        photo_id, path = photo.get("id"), photo.get("path")
+        record_id = _record_id(session, entry.attempt_id)
+        if not record_id:
+            raise AttachmentDeferred(
+                f"attempt {entry.attempt_id} has no Airtable record yet; "
+                "its create phase has not been delivered")
+
+        data, filename, digest = artifacts.build_preview(path, photo_id)
+
+        try:
+            response = client.upload_attachment(
+                settings.results_table, record_id, PHOTOS_FIELD, filename, data,
+                content_type=artifacts.CONTENT_TYPE)
+        except AirtableTransportError as exc:
+            # The request left, the answer did not. Do NOT retry blind.
+            outbox.mark_artifact_ambiguous(session, photo_id, entry.attempt_id)
+            existing = artifacts.find_existing_attachment(
+                client.record_attachments(settings.results_table, record_id,
+                                          PHOTOS_FIELD),
+                filename)
+            if existing is None:
+                raise
+            log.info("reconciled photograph %s: the upload had landed as %s",
+                     photo_id, existing.get("id"))
+            outbox.mark_artifact_delivered(
+                session, photo_id, entry.attempt_id,
+                airtable_record_id=record_id, attachment_id=existing.get("id"),
+                content_hash=digest)
+            return existing.get("id")
+
+        attachments = (response.get("fields") or {}).get(PHOTOS_FIELD) or []
+        landed = artifacts.find_existing_attachment(attachments, filename)
+        attachment_id = (landed or {}).get("id")
+        outbox.mark_artifact_delivered(
+            session, photo_id, entry.attempt_id, airtable_record_id=record_id,
+            attachment_id=attachment_id, content_hash=digest)
+        return attachment_id
+
     def send(entry):
-        """One outbox entry -> one upsert on the single writable table.
+        """One outbox entry -> one write on the single writable table.
 
-        The payload is already the envelope: `enqueue` stored what the mapping
-        produced, so the worker never re-derives it. Re-deriving at send time
-        would mean the row that goes out is whatever the database says *now*,
-        not what was agreed when the phase was recorded.
+        A record phase is an upsert of the envelope `enqueue` stored — the
+        worker never re-derives it, because re-deriving at send time would mean
+        the row that goes out is whatever the database says *now*, not what was
+        agreed when the phase was recorded.
 
-        **Attachment entries are refused here, deliberately.** This function
-        used to send every phase through `upsert_records` without looking at
-        `entry.phase`, and an attachment payload is not a record payload — it
-        carries a `photo` object, not Airtable fields. Live, Airtable would have
-        rejected every photograph as an unknown field: a 422, which is terminal,
-        so **every attachment would have parked on first contact** and
-        `/sync/status` would have sat at Retry Required forever.
-
-        The upload path (preview generation, contract §6's direct upload,
-        recording the returned attachment ids) is not built yet.
+        An attachment is a different write entirely: a preview, uploaded by
+        value. Until 2026-09-08 this function ignored `entry.phase` and pushed
+        attachment payloads through `upsert_records`, so Airtable would have
+        rejected every photograph as an unknown field — a 422, which is
+        terminal, parking each one on first contact.
         """
         if entry.phase == outbox.ATTACHMENT:
-            raise AirtableValidationError(
-                "attachment delivery is not implemented yet: LabOS has no "
-                "preview-generation or upload path, so this photograph cannot "
-                "be sent. Parked deliberately rather than PATCHed as record "
-                "fields, which Airtable would reject as an unknown field. The "
-                "evidence is safe in LabOS and this entry carries what to send "
-                "once the uploader exists."
-            )
+            session = session_for(entry) if session_for else None
+            if session is None:
+                raise AirtableValidationError(
+                    "this sender was built without database access, so it "
+                    "cannot deliver attachments")
+            return _send_attachment(entry, session)
+
         response = client.upsert_records(settings.results_table, [entry.payload])
         records = response.get("records") or []
         return records[0].get("id") if records else None
@@ -199,11 +267,14 @@ def main(argv=None):                                        # pragma: no cover
     session_factory = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     client = AirtableClient(settings=airtable_settings)
 
-    send = make_sender(client, airtable_settings)
+    holder = {}
+    send = make_sender(client, airtable_settings,
+                       session_for=lambda entry: holder.get("session"))
 
     stopping = Stopping().install()
     try:
-        run(session_factory, send, slot_engine=engine, stopping=stopping)
+        run(session_factory, send, slot_engine=engine, stopping=stopping,
+            session_holder=holder)
     except singleton.WorkerAlreadyRunning as exc:
         log.error("%s", exc)
         return 1

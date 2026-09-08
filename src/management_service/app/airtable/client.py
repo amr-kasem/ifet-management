@@ -42,6 +42,14 @@ from .errors import (
 
 API_ROOT = "https://api.airtable.com/v0"
 
+# Attachment uploads go to a different host, and that is Airtable's design, not
+# a quirk to work around: `content.airtable.com` takes the file body directly,
+# so LabOS never has to expose a URL for Airtable to fetch. Contract §6 — "no
+# public lab-network exposure is needed for preview upload" — depends on this
+# endpoint existing; the alternative is `[{"url": ...}]`, which would require
+# the lab network to be reachable from the internet.
+CONTENT_ROOT = "https://content.airtable.com/v0"
+
 # Airtable allows 5 requests/second per base. 0.2s spacing keeps us at the limit
 # without a token bucket; the sync worker is serialized anyway (§8).
 
@@ -234,6 +242,46 @@ class AirtableClient:
             payload["typecast"] = True
         url = f"{API_ROOT}/{self.settings.base_id}/{table_id}"
         return self.request("PATCH", url, payload)
+
+    def upload_attachment(self, table_id, record_id, field, filename,
+                          data, content_type="image/jpeg"):
+        """Attach one file to one record, by value. Returns the attachment id.
+
+        `POST content.airtable.com/v0/{base}/{record}/{field}/uploadAttachment`
+        with the bytes base64-encoded in the body — no URL for Airtable to
+        fetch, which is what keeps the lab network private (§6).
+
+        **Goes through the same write allowlist as every other write.** The
+        endpoint and the host differ; the rule that LabOS may write exactly one
+        table does not.
+
+        The response returns the record with the field's full attachment list.
+        The id we want is the one whose filename matches what we sent — not
+        "the last one", because a record may already carry attachments and the
+        order is Airtable's to decide.
+        """
+        import base64
+
+        self._assert_may_write(table_id)
+        url = (f"{CONTENT_ROOT}/{self.settings.base_id}/{record_id}/"
+               f"{field}/uploadAttachment")
+        payload = {
+            "contentType": content_type,
+            "file": base64.b64encode(data).decode("ascii"),
+            "filename": filename,
+        }
+        return self.request("POST", url, payload)
+
+    def record_attachments(self, table_id, record_id, field):
+        """One record's attachments for `field`, or [] if it has none.
+
+        Used to reconcile an ambiguous upload: §6 requires reading the remote
+        state rather than blindly re-appending, and says a single absent read is
+        not proof of failure.
+        """
+        url = f"{API_ROOT}/{self.settings.base_id}/{table_id}/{record_id}"
+        record = self.request("GET", url)
+        return (record.get("fields") or {}).get(field) or []
 
     def create_records(self, table_id, records, typecast=False):
         """Plain create. Present for probe/diagnostic use — the sync worker

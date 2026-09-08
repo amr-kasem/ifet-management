@@ -42,6 +42,24 @@ from sqlalchemy.exc import IntegrityError
 from ..retry_budget import request_budget_seconds
 from ..data.models import Base
 
+class AttachmentDeferred(Exception):
+    """Not a failure: the record this photograph belongs to is not there yet.
+
+    Airtable cannot attach a file to a record that does not exist, and the two
+    channels are independent by design — so an attachment can be claimed before
+    its attempt's `create` has landed. That is an ordering wait, not an error:
+    parking it would need a human to un-park something that was about to work on
+    its own, and counting it as a failure would burn one of its attempts.
+
+    **Defined here rather than in `service`.** "Not ready yet" is a fact about
+    the queue, not about the transport, and the worker must be able to catch it
+    without importing the module that builds the Airtable client — it is on
+    `report-api`'s allowlist precisely because it opens no sockets. The first
+    version imported `service` lazily inside the `except` clause, which broke as
+    soon as anything else had reloaded these modules.
+    """
+
+
 # --- entry states ----------------------------------------------------------
 PENDING = "pending"     # waiting its turn, or waiting out a backoff
 INFLIGHT = "inflight"   # leased by a worker

@@ -30,11 +30,26 @@ except ImportError:                                          # pragma: no cover
 import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker
 
-JPEG = {"file": ("evidence.jpg", io.BytesIO(b"jpegbytes"), "image/jpeg")}
+# A module-level fixture cannot be reused: BytesIO is consumed once. Call
+# `_jpeg()` per request instead.
 
 
 def _jpeg(name="evidence.jpg"):
-    return {"file": (name, io.BytesIO(b"jpegbytes"), "image/jpeg")}
+    """A **real** JPEG, not `b"jpegbytes"`.
+
+    The uploader downscales every photograph before sending it, so a fixture
+    that is not a decodable image tests the refusal path and nothing else. This
+    was literal `b"jpegbytes"` until the uploader existed, which is why
+    "attachments park" looked like isolation rather than a missing capability.
+    """
+    return {"file": (name, io.BytesIO(_jpeg_bytes()), "image/jpeg")}
+
+
+def _jpeg_bytes(size=(64, 48), colour=(180, 40, 40)):
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", size, colour).save(buf, format="JPEG", quality=80)
+    return buf.getvalue()
 
 
 def _client_and_session():

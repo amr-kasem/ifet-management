@@ -122,6 +122,15 @@ services:
       - db
     volumes:
       - ./src/management_service/app:/app/app
+      # **The originals.** The worker downscales each photograph to a preview
+      # before uploading it, so it needs read access to the same files the API
+      # writes. Without this mount every attachment fails with "the original is
+      # not readable" — the API had the volume and the worker did not, which is
+      # invisible until an upload is actually attempted.
+      #
+      # Read-only: the worker generates previews in memory and records what it
+      # delivered in the database. It has no business altering evidence.
+      - ./uploads:/app/uploads:ro
     # `on-failure`, not `always`. The worker distinguishes two kinds of stop:
     #   exit 0  - deliberately off (no token, or AIRTABLE_SYNC_ENABLED=false).
     #             Valid states, so the container stops once, quietly, and the one

@@ -6,3 +6,4 @@ fastapi_crudrouter
 alembic
 PyPDF2
 reportlab
+Pillow
