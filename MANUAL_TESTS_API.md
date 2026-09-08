@@ -120,9 +120,14 @@ impact test
   └── attempt 1
         ├── impact 1   result: pass    photos: [ ]
         ├── impact 2   result: pass    photos: [ 1 ]
-        └── impact 3   result: FAIL    photos: [ corner detail, wide shot ]
+        └── impact 3   result: FAIL    photos: [ wide shot, corner detail, interior face ]
         └── attempt-level photos: [ specimen before ]
 ```
+
+**Any impact can carry any number of photographs, including none.** `POST
+/shots/{id}/photos` is repeatable; `photos` on each impact is a list, returned in
+upload order. An attempt also has its own photographs — the specimen before
+testing, the overall setup — which have `shot_id: null`.
 
 | Route | |
 |---|---|
@@ -133,7 +138,7 @@ impact test
 | `PUT /projects/{pid}/impact-tests/{id}/finish` | mark the test complete |
 | `POST /test-results/{aid}/shots` | **record one impact** — `{"result": true}`. `result` is the only required field; `area`, `velocity`, `note` optional. Omitting it is **422** |
 | `GET /test-results/{aid}/shots` | the impacts **in order**, each with its photographs |
-| `POST /shots/{sid}/photos` | photograph of **one specific impact** |
+| `POST /shots/{sid}/photos` | photograph of **one specific impact**; call it once per photograph |
 
 **`shot_number` is allocated server-side** — 1, 2, 3 in recording order,
 restarting at 1 for each attempt. Not accepted from the client: one that chose
@@ -194,9 +199,14 @@ fully testable — that is the normal mode, not a degraded one.
   now nullable, so handle `null`.
 - **Render `shot_number`, never the shot `id`.** They are unrelated numbers, and
   the id is meaningless to an operator.
-- **A photograph appears in exactly one place.** `shot_id` set → it belongs to
-  that impact. `shot_id` null → it is attempt-level. Do not render per-impact
-  photographs twice.
+- **`shot_id` says where a photograph belongs.** Set → it shows that impact.
+  Null → it is attempt-level. The attempt's own `photos` list contains **both**,
+  because a per-impact photograph is still evidence of the attempt — so when
+  rendering an impact's gallery, read the impact's list, not the attempt's, or
+  the same file appears twice.
+- **A photograph count of zero is normal.** Impacts need not each be
+  photographed; the attempt only needs at least one photograph overall to
+  finish.
 
 ---
 

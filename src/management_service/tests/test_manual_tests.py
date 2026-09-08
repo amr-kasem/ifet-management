@@ -312,6 +312,56 @@ class Impact(_Base):
         self.assertEqual([s["result"] for s in listed], [True, True, False])
         self.assertEqual([s["shot_number"] for s in listed], [1, 2, 3])
 
+    def test_one_impact_can_carry_several_photographs(self):
+        """"A few photos" per impact — the relationship is one-to-many.
+
+        Asserted explicitly because the obvious wrong implementation, a single
+        `photo_path` column on the shot, would pass every other test here.
+        """
+        shot = self.shot(result=False, note="corner cracked").json()
+        for name, note in (("wide.jpg", "wide shot"),
+                           ("corner.jpg", "corner detail"),
+                           ("interior.jpg", "interior face")):
+            r = self.client.post(f"/shots/{shot['id']}/photos",
+                                 files=_jpeg(name), data={"note": note})
+            self.assertEqual(r.status_code, 200, r.text)
+            self.assertEqual(r.json()["shot_id"], shot["id"])
+
+        listed = self.client.get(f"/test-results/{self.attempt['id']}/shots").json()
+        self.assertEqual(len(listed), 1)
+        self.assertEqual([p["note"] for p in listed[0]["photos"]],
+                         ["wide shot", "corner detail", "interior face"])
+
+    def test_photographs_stay_with_their_own_impact(self):
+        """Three impacts, different numbers of photographs each."""
+        shots = [self.shot(result=r).json() for r in (True, False, True)]
+        for shot, n in zip(shots, (0, 2, 1)):
+            for i in range(n):
+                self.client.post(f"/shots/{shot['id']}/photos",
+                                 files=_jpeg(f"s{shot['shot_number']}-{i}.jpg"))
+        listed = self.client.get(f"/test-results/{self.attempt['id']}/shots").json()
+        self.assertEqual([(s["shot_number"], len(s["photos"])) for s in listed],
+                         [(1, 0), (2, 2), (3, 1)])
+
+    def test_attempt_photos_and_impact_photos_do_not_mix(self):
+        """An attempt-level photograph has shot_id NULL and is not listed under
+        any impact — so the UI never renders the same photograph twice."""
+        shot = self.shot().json()
+        self.client.post(f"/shots/{shot['id']}/photos", files=_jpeg("impact.jpg"))
+        self.client.post(f"/test-results/{self.attempt['id']}/photos",
+                         files=_jpeg("specimen-before.jpg"))
+
+        listed = self.client.get(f"/test-results/{self.attempt['id']}/shots").json()
+        self.assertEqual([p["filename"] for p in listed[0]["photos"]],
+                         ["impact.jpg"])
+
+        attempt = self.client.get(f"/projects/1/impact-tests/{self.test_id}/trials").json()[0]
+        # The attempt carries both: its own, plus the per-impact one, because a
+        # per-impact photograph is still evidence of the attempt.
+        by_shot = {p["filename"]: p["shot_id"] for p in attempt["photos"]}
+        self.assertIsNone(by_shot["specimen-before.jpg"])
+        self.assertEqual(by_shot["impact.jpg"], shot["id"])
+
     def test_a_photo_attaches_to_one_impact(self):
         shot = self.shot(result=False, note="corner cracked").json()
         r = self.client.post(f"/shots/{shot['id']}/photos",
