@@ -14,8 +14,11 @@ It checks four claims, and each one has a way of being quietly wrong:
 2. **Production still has none of them, and is still 142 fields.** If someone
    applied them early, "production is untouched" is false and the document is
    misleading rather than merely stale.
-3. **Every row in `production-change-spec.csv` matches the live bases.** That CSV
-   is the sheet they will work from; a stale row is a wrong instruction.
+3. **Every row in `production-change-spec.csv` matches the live bases** — for a
+   KEEP row, the field's **type** as well as its presence. The document's "0
+   retyped" claim is what makes the change additive in the sense their
+   automations care about, and it came from a generated snapshot; a field
+   retyped since then would have gone unnoticed.
 4. **The fixture still reads back.** Someone may have cleared the Testing base,
    in which case the verification section describes something no longer there.
 5. **The document's own arithmetic.** Reads + writes + ignored must equal the
@@ -145,7 +148,30 @@ def main(argv=None):
             if r["action"] == "ADD" and not in_test:
                 bad += 1
                 fails.append(f"spec says ADD {r['field']!r} but it is not in Testing either")
+
+            # **Types on the KEEP rows, not just presence.**
+            #
+            # The document's "0 retyped" claim is what makes the change additive
+            # in the sense that matters to their automations, and this check
+            # verified only that a KEEP field still *existed*. The claim itself
+            # came from the generated before/after CSV — true when generated, and
+            # generated from a snapshot. A field retyped in Testing since then
+            # would have passed here while the document asserted otherwise.
+            #
+            # Compared against Testing, because Testing is the base being
+            # replicated: a pre-existing field whose type differs there is
+            # exactly the retype the document says did not happen.
+            if r["action"] == "KEEP" and in_test and r.get("type"):
+                live_type = test_s.get(tid, {}).get(r["field"])
+                if live_type and live_type != r["type"]:
+                    bad += 1
+                    fails.append(
+                        f"{r['field']!r} in {r['table']} is {live_type!r} in "
+                        f"Testing but the spec says {r['type']!r} — the "
+                        "document claims 0 fields were retyped")
         print(f"   {len(rows)} rows checked, {bad} disagree with the live bases")
+        print(f"   including the type of every pre-existing field, not just "
+              f"its presence")
 
     # -- 4. the fixture is still there -------------------------------------
     print("\n4. The fixture the document cites")
