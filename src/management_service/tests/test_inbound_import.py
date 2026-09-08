@@ -302,6 +302,54 @@ class ImportGoesThroughTheOneCreatePath(_Base):
                          "GAUGE_COUNT is a parameter, not a test")
         self.assertEqual(project["impact_count"], 3)
 
+    def test_two_impact_sections_sum_rather_than_overwrite(self):
+        """LMI and SMI are different missiles, each with its own count.
+
+        `out.impact_count` was assigned rather than accumulated, so a protocol
+        requiring 2 large-missile impacts and 3 small-missile ones kept whichever
+        section the mirror returned last. Both values are individually plausible,
+        which is why nothing caught it — and the product owner's confirmation
+        that one impact means one attempt makes this figure load-bearing: it is
+        what says how many attempt rows a protocol should produce.
+        """
+        self.mirror_sections(
+            section("recSEC_STATIC", "STATIC_PRESSURE"),
+            section("recSEC_LMI", "IMPACT_LMI", required_value=2.0),
+            section("recSEC_SMI", "IMPACT_SMI", required_value=3.0))
+        r = self.do_import()
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["impact_count"], 5)
+
+    def test_two_impact_sections_are_two_tests(self):
+        """The reason summing is right and refusing would not be.
+
+        Two design-pressure sections that disagree cannot both hold — all
+        fourteen stages come from one pair. Two impact sections that differ are
+        not a contradiction at all: each becomes its own test.
+        """
+        from app.data.models import MissileImpactTest
+        self.mirror_sections(
+            section("recSEC_STATIC", "STATIC_PRESSURE"),
+            section("recSEC_LMI", "IMPACT_LMI", required_value=2.0),
+            section("recSEC_SMI", "IMPACT_SMI", required_value=3.0,
+                    missile="Small Missile A", missile_weight=2.0))
+        self.assertEqual(self.do_import().status_code, 200)
+        s = self.Session()
+        try:
+            tests = s.query(MissileImpactTest).all()
+            self.assertEqual(len(tests), 2)
+            self.assertEqual({t.airtable_section_id for t in tests},
+                             {"recSEC_LMI", "recSEC_SMI"})
+            self.assertEqual({t.missile for t in tests},
+                             {"Large Missile D", "Small Missile A"})
+        finally:
+            s.close()
+
+    def test_one_impact_section_is_unchanged(self):
+        """Accumulating from `None` must not turn one section into a sum."""
+        self.full_protocol()
+        self.assertEqual(self.do_import().json()["impact_count"], 3)
+
     def test_a_repeated_import_returns_the_same_project(self):
         self.full_protocol()
         first = self.do_import().json()

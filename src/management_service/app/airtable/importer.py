@@ -164,7 +164,22 @@ def plan(session, project_record_id, specimen_record_id, protocol_record_id):
                 continue
             out.design_pressures = list(pair)
         if code in ("IMPACT_LMI", "IMPACT_SMI"):
-            out.impact_count = int(section.required_value)
+            # **Accumulated, not assigned.** This was `out.impact_count = ...`,
+            # which is last-section-wins: a protocol requiring 2 large-missile
+            # impacts and 3 small-missile ones ended up with whichever section
+            # the mirror happened to return last, and both values are
+            # individually plausible.
+            #
+            # Refusing on disagreement — the rule directly above for the design
+            # pressures — would be wrong here. Two pressure sections that
+            # disagree cannot both hold, because all fourteen stages come from
+            # one pair. Two impact sections that differ are **not** a
+            # contradiction: LMI and SMI are different missiles, each with its
+            # own required count, and `bind` creates a separate impact test for
+            # each. So the project-level figure is the total number of impacts
+            # the protocol requires, and the per-test figure is the section's
+            # own — read from `section.required_value` where the test is built.
+            out.impact_count = (out.impact_count or 0) + int(section.required_value)
 
         if applicability == req.NOT_REQUIRED:
             out.not_required.append(section)
