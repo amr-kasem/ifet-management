@@ -15,7 +15,7 @@ four parent types, deliberately carrying the **three formats the migration
 exists to unify**: the P1 uuid5, a random uuid4, and the manual slug.
 
 Chain: P1 -> M2 -> d1a6b93f2e57 -> e5f3a71c8d92 -> f7b2c04e19a5 ->
-a3d8e5c71f04, then all six down.
+a3d8e5c71f04 -> b9c1f60d4e27, then all seven down.
 """
 
 import os
@@ -59,6 +59,51 @@ def load_artifacts():
 def load_operator():
     """`a3d8e5c71f04` — operator identity captured at run start."""
     return _load("a3d8e5c71f04_run_start_operator.py", "operator_mig")
+
+
+def load_mirror():
+    """`b9c1f60d4e27` — the Airtable mirror and the frozen requirement."""
+    return _load("b9c1f60d4e27_mirror_and_requirement_freeze.py", "mirror_mig")
+
+
+def check_mirror(engine):
+    """The mirror exists, and **has nowhere to put `Value`**.
+
+    The absent column is the safety property, not an omission: `Value` is
+    populated by a PDF extractor that drops blank cells, so a requirement of
+    `+60/60` can arrive as `9` and a shifted value has already reached a record
+    marked Passed (§10.19). A future migration that adds it would defeat the
+    boundary, so the rehearsal asserts it stays absent.
+    """
+    failures = []
+    insp = sa.inspect(engine)
+    tables = set(insp.get_table_names())
+    for name in ("at_mirror_projects", "at_mirror_specimens",
+                 "at_mirror_protocols", "at_mirror_sections"):
+        if name not in tables:
+            failures.append(f"{name} was not created")
+    if failures:
+        return failures
+
+    cols = {c["name"] for c in insp.get_columns("at_mirror_sections")}
+    for forbidden in ("value", "Value"):
+        if forbidden in cols:
+            failures.append(
+                f"at_mirror_sections has a {forbidden!r} column — the "
+                "extractor's shifted column must have nowhere to land (§10.19)")
+    # The typed requirement fields must all be there, or pre-fill reads nothing.
+    for needed in ("requirement_code", "requirement_kind", "applicability",
+                   "required_value_inward", "required_value_outward",
+                   "required_unit", "required_option", "missile",
+                   "missile_weight", "impact_velocity"):
+        if needed not in cols:
+            failures.append(f"at_mirror_sections has no {needed!r}")
+
+    attempt_cols = {c["name"] for c in insp.get_columns("test_results")}
+    if "requirement_snapshot" not in attempt_cols:
+        failures.append("test_results has no requirement_snapshot, so an "
+                        "attempt cannot freeze what it was run against")
+    return failures
 
 
 def check_artifact_tables(engine):
@@ -269,7 +314,7 @@ def main():
 
     engine = sa.create_engine(url)
     p1, m2, mt, uq = load_p1(), load_m2(), load_mt(), load_uq()
-    art, op = load_artifacts(), load_operator()
+    art, op, mir = load_artifacts(), load_operator(), load_mirror()
 
     if art.down_revision != uq.revision:
         print(f"  FAIL {art.revision} revises {art.down_revision!r}, "
@@ -279,12 +324,17 @@ def main():
         print(f"  FAIL {op.revision} revises {op.down_revision!r}, "
               f"not {art.revision!r}")
         return 1
+    if mir.down_revision != op.revision:
+        print(f"  FAIL {mir.revision} revises {mir.down_revision!r}, "
+              f"not {op.revision!r}")
+        return 1
     if uq.down_revision != mt.revision:
         print(f"  FAIL {uq.revision} revises {uq.down_revision!r}, "
               f"not {mt.revision!r}")
         return 1
     print(f"ordering OK: {p1.revision} -> {m2.revision} -> {mt.revision} "
-          f"-> {uq.revision} -> {art.revision} -> {op.revision}")
+          f"-> {uq.revision} -> {art.revision} -> {op.revision} "
+          f"-> {mir.revision}")
 
     with engine.begin() as conn:
         conn.exec_driver_sql("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
@@ -314,13 +364,18 @@ def main():
     print(f"artifact-delivery {art.revision} upgraded")
     apply(engine, op, "upgrade")
     print(f"run-start-operator {op.revision} upgraded")
+    apply(engine, mir, "upgrade")
+    print(f"mirror-and-freeze {mir.revision} upgraded")
     failures += check_artifact_tables(engine)
     failures += check_operator_columns(engine)
+    failures += check_mirror(engine)
     if not failures:
         print("artifact delivery keyed on the photograph, publication failures "
-              "unique per (attempt, phase), operator_name on all four tables")
+              "unique per (attempt, phase), operator_name on all four tables, "
+              "mirror present with no column for `Value`")
 
-    for mig, label in ((op, "run-start-operator"), (art, "artifact-delivery"),
+    for mig, label in ((mir, "mirror-and-freeze"), (op, "run-start-operator"),
+                       (art, "artifact-delivery"),
                        (uq, "attempt-uniqueness"), (mt, "manual-tests"),
                        (m2, "M2"), (p1, "P1")):
         apply(engine, mig, "downgrade")
@@ -329,8 +384,10 @@ def main():
     names = {u["name"] for u in insp.get_unique_constraints("test_results")}
     if "uq_test_results_test_attempt" in names:
         failures.append("downgrade left the constraint behind")
-    left = set(insp.get_table_names()) & {"sync_artifact_delivery",
-                                          "sync_publication_failure"}
+    left = set(insp.get_table_names()) & {
+        "sync_artifact_delivery", "sync_publication_failure",
+        "at_mirror_projects", "at_mirror_specimens", "at_mirror_protocols",
+        "at_mirror_sections"}
     if left:
         failures.append(f"downgrade left {sorted(left)} behind")
 

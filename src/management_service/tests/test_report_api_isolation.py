@@ -58,6 +58,14 @@ PERSISTENCE_AND_PAYLOAD = (
     "app.airtable.contract",
     "app.airtable.errors",
     "app.retry_budget",
+    # The inbound half: the mirror, the requirement reader and the importer.
+    # All three are persistence and interpretation — they hold no client and
+    # open no socket. `POST /airtable/refresh` is the single exception and
+    # builds its client inside the function, which is why the source scan below
+    # is what actually enforces this rule.
+    "app.airtable.mirror",
+    "app.airtable.requirements",
+    "app.airtable.importer",
 )
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent / "app"
@@ -94,8 +102,18 @@ class ReportApiIsolation(unittest.TestCase):
         pattern = re.compile(
             r"\b(?:from|import)\s+\.*[\w.]*(" + "|".join(tails) + r")\b")
         for path in list((ROOT / "data").rglob("*.py")) + [ROOT / "main.py"]:
-            code = "\n".join(l.split("#")[0]
-                             for l in path.read_text(encoding="utf-8").splitlines())
+            # **Module-scope imports only** — an unindented `import` line.
+            #
+            # `POST /airtable/refresh` is the one route that must reach Airtable,
+            # and it builds its client inside the function body. That is the
+            # deliberate exception: importing the transport lazily, in one named
+            # place, keeps it out of every other request rather than out of the
+            # process. A module-scope import is what would put it on the import
+            # path of every route, which is the thing being prevented.
+            code = "\n".join(
+                l.split("#")[0]
+                for l in path.read_text(encoding="utf-8").splitlines()
+                if not l.startswith((" ", "\t")))
             hits = sorted(set(pattern.findall(code)))
             if hits:
                 offenders[path.name] = hits

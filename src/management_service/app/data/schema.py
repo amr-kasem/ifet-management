@@ -230,6 +230,23 @@ class ProjectSchema(ProjectCreateSchema):
     manual_tests: List["ManualTestSchema"] = []
     cyclic_tests: List[CyclicTestSchema]
 
+    # Pre-filled parameters, exposed because pre-fill is pointless if the form
+    # cannot read what was filled in. Response-only — they are on
+    # `ProjectSchema` rather than `ProjectCreateSchema`, so creating a project
+    # still takes exactly the fields a person types, and the import path fills
+    # these afterwards from the requirement sections.
+    #
+    # Both nullable: a locally-typed job has no upstream requirement to pre-fill
+    # them from, and absent is not zero.
+    gauge_count: Optional[int] = None
+    impact_count: Optional[int] = None
+    # The Airtable identity, so a UI can show whether a job is linked and to
+    # what. Never required — a project with no `airtable_*` id is a normal
+    # standalone job (§4.6 Class 3).
+    airtable_project_id: Optional[str] = None
+    airtable_mockup_id: Optional[str] = None
+    airtable_mockup_name: Optional[str] = None
+
     class Config:
         from_attributes = True
 
@@ -491,6 +508,25 @@ class RunStartSchema(BaseModel):
     """
 
     operator_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ImportRequestSchema(BaseModel):
+    """Which Airtable hierarchy to import, and onto which rig.
+
+    `device_id` is LabOS's alone: which rig will run this is an operator's
+    decision about a physical machine, and Airtable has no opinion on it
+    (§4.6 Class 1). `name` overrides the specimen name for the local project,
+    for the case where the mock-up name is not what the lab calls it.
+    """
+
+    device_id: int
+    project_record_id: str
+    specimen_record_id: str
+    protocol_record_id: str
+    name: Optional[str] = None
 
     class Config:
         from_attributes = True

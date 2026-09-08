@@ -10,6 +10,7 @@ from app.data.schema import *  # RunStartSchema included
 from app.data import attempts
 # The transactional-outbox seam. Persistence and payload only — it cannot
 # open a socket, which `tests/test_report_api_isolation.py` enforces.
+from app.airtable import importer, mirror, requirements
 from app.sync import publish
 # Local status reads only — `state` and `outbox` are persistence, not transport.
 from app.sync import outbox as outbox_mod
@@ -442,6 +443,10 @@ def create_static_test_trial(project_id: int, static_test_index: int, trial_data
     # publish a row that never existed — here, one whose `data_quality` did not
     # yet know a gauge had been read.
     db.flush()
+    # Freeze the requirement now, not at publish time: upstream requirements
+    # change, and an attempt that read its own later would report having been
+    # run against something it was not.
+    importer.freeze_requirement(db, new_trial, static_test)
     publish.record_phase(db, new_trial, publish.CREATE)
     # The rig posted a finished stage, so terminate it in the same call when the
     # post carried an operator. Without one the attempt stays In Progress and
@@ -644,6 +649,10 @@ def create_cyclic_test_trial(project_id: int, cyclic_test_index: int, trial_data
     # publish a row that never existed — here, one whose `data_quality` did not
     # yet know a gauge had been read.
     db.flush()
+    # Freeze the requirement now, not at publish time: upstream requirements
+    # change, and an attempt that read its own later would report having been
+    # run against something it was not.
+    importer.freeze_requirement(db, new_trial, cyclic_test)
     publish.record_phase(db, new_trial, publish.CREATE)
     # The rig posted a finished stage, so terminate it in the same call when the
     # post carried an operator. Without one the attempt stays In Progress and
@@ -1410,6 +1419,8 @@ def _start_attempt(db, cls, test, test_type, operator_name, **link):
 
     attempt = attempts.insert_attempt(db, build)
     db.flush()   # the attempt needs its identity before it can be queued
+    # Frozen at start, for the same reason as the rig paths above.
+    importer.freeze_requirement(db, attempt, test)
     publish.record_phase(db, attempt, publish.CREATE)
     db.commit()  # attempt + queue entry, one transaction (contract §4)
     db.refresh(attempt)
@@ -1685,6 +1696,189 @@ def review_attempt(test_result_id: int, body: VerdictSchema,
 # stalled queue must be visible precisely when Airtable is unreachable.
 # `retry` re-enables eligibility and sends nothing itself.
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# The inbound half — hierarchy selection, import and pre-fill.
+#
+# **Every read here serves from the local mirror, never from Airtable.** An
+# operator picking a job at a rig cannot have the picker depend on someone
+# else's API being up, and an empty mirror is an empty picker rather than a
+# blocked operator (plan §4.6). `POST /airtable/refresh` is the only thing that
+# talks to Airtable, and it is a deliberate action rather than a side effect of
+# reading.
+#
+# `report-api` imports `app.airtable.mirror`, `importer` and `requirements` —
+# all three are pure persistence and interpretation, and
+# `tests/test_report_api_isolation.py` holds them to that.
+# ---------------------------------------------------------------------------
+
+@app.get("/airtable/projects")
+def airtable_projects(db: Session = Depends(get_db)):
+    """Jobs available to import, from the mirror.
+
+    `mirrored_at` is returned per row because a stale mirror is a fact the
+    operator may need: importing from a two-week-old mirror is legitimate, and
+    knowing that it is two weeks old is what makes it a decision.
+    """
+    rows = (db.query(mirror.AtMirrorProject)
+            .order_by(mirror.AtMirrorProject.job_number).all())
+    return {"count": len(rows),
+            "projects": [{"record_id": r.record_id,
+                          "job_number": r.job_number,
+                          "project_name": r.project_name,
+                          "mirrored_at": r.mirrored_at.isoformat()
+                                         if r.mirrored_at else None}
+                         for r in rows]}
+
+
+@app.get("/airtable/projects/{record_id}/specimens")
+def airtable_specimens(record_id: str, db: Session = Depends(get_db)):
+    rows = (db.query(mirror.AtMirrorSpecimen)
+            .filter(mirror.AtMirrorSpecimen.project_record_id == record_id)
+            .order_by(mirror.AtMirrorSpecimen.specimen_name).all())
+    return {"count": len(rows),
+            "specimens": [{"record_id": r.record_id,
+                           "name": r.specimen_name,
+                           # Already imported? The picker needs to say so, or an
+                           # operator re-imports and wonders why nothing changed.
+                           "imported_project_id": getattr(
+                               importer.existing_project(db, r.record_id),
+                               "id", None)}
+                          for r in rows]}
+
+
+@app.get("/airtable/specimens/{record_id}/protocols")
+def airtable_protocols(record_id: str, db: Session = Depends(get_db)):
+    rows = (db.query(mirror.AtMirrorProtocol)
+            .filter(mirror.AtMirrorProtocol.specimen_record_id == record_id)
+            .order_by(mirror.AtMirrorProtocol.protocol_name).all())
+    return {"count": len(rows),
+            "protocols": [{"record_id": r.record_id, "name": r.protocol_name}
+                          for r in rows]}
+
+
+@app.get("/airtable/protocols/{record_id}/sections")
+def airtable_sections(record_id: str, db: Session = Depends(get_db)):
+    """The sections of one protocol, each with whether LabOS can execute it.
+
+    `refused` carries the reason, because a section LabOS will not run is the
+    one thing the operator can actually fix — and a picker that simply omitted
+    it would look identical to a protocol where every section was fine.
+    """
+    rows = (db.query(mirror.AtMirrorSection)
+            .filter(mirror.AtMirrorSection.protocol_record_id == record_id)
+            .order_by(mirror.AtMirrorSection.record_id).all())
+    out = []
+    for r in rows:
+        entry = {"record_id": r.record_id, "section_name": r.section_name,
+                 "requirement_code": r.requirement_code,
+                 "applicability": requirements.applicability_of(r),
+                 "executable": False, "refused": None}
+        try:
+            requirements.validate(r)
+            entry["executable"] = (
+                r.requirement_code in requirements.EXECUTABLE_CODES
+                and entry["applicability"] == requirements.REQUIRED)
+        except requirements.RequirementError as exc:
+            entry["refused"] = str(exc)
+        out.append(entry)
+    return {"count": len(out), "sections": out}
+
+
+@app.post("/airtable/refresh")
+def airtable_refresh(db: Session = Depends(get_db)):
+    """Re-read the hierarchy into the mirror. **The only route that calls Airtable.**
+
+    Deliberately separate from every read, so no request an operator makes can
+    block on Airtable. Idempotent: it updates rows in place and creates none on
+    a re-run, which is what makes a repeated import safe.
+
+    This is the one place `report-api` builds an Airtable client, and it is
+    imported inside the function rather than at module scope — the isolation
+    test forbids the transport in the request path, and a refresh is the
+    explicit exception rather than a hole in the rule.
+    """
+    from app.airtable.client import AirtableClient   # noqa: PLC0415
+    from app.config import airtable_settings         # noqa: PLC0415
+    if not airtable_settings.token:
+        raise HTTPException(
+            status_code=503,
+            detail="No Airtable token is configured, so the mirror cannot be "
+                   "refreshed. Existing mirrored data is still readable and "
+                   "still importable.")
+    counts = mirror.refresh(db, AirtableClient(settings=airtable_settings))
+    db.commit()
+    return {"refreshed": counts}
+
+
+@app.post("/airtable/import/plan")
+def airtable_import_plan(body: ImportRequestSchema,
+                         db: Session = Depends(get_db)):
+    """What an import would do, without doing any of it.
+
+    Separate from the import so an operator sees the consequences first: which
+    sections are executable, which are unconfirmed, and which are refused and
+    why. An import that silently skipped a malformed section would look
+    identical to one where every section was fine.
+    """
+    try:
+        return importer.plan(db, body.project_record_id,
+                             body.specimen_record_id,
+                             body.protocol_record_id).as_dict()
+    except importer.ImportError_ as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/airtable/import", response_model=ProjectSchema)
+def airtable_import(body: ImportRequestSchema, db: Session = Depends(get_db)):
+    """Import a hierarchy as a LabOS project, once.
+
+    **Goes through `create_project_for_device`** — the same function a typed
+    project goes through, called with pre-filled values instead of typed ones.
+    Not a parallel create path: the six static and eight cyclic tests derived
+    from the design pressures are exactly what would drift between two paths,
+    and §4.6 says standalone and synced are one form with the boxes empty or
+    filled.
+
+    **Duplicate-safe on the mock-up record.** A repeated import returns the
+    project it already made. Re-importing after a refresh is a normal action,
+    and answering it with a second set of tests against the same specimen would
+    turn a refresh into duplicated certification work.
+    """
+    device = db.query(Device).filter(Device.id == body.device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    already = importer.existing_project(db, body.specimen_record_id)
+    if already is not None:
+        return already
+
+    try:
+        import_plan = importer.plan(db, body.project_record_id,
+                                    body.specimen_record_id,
+                                    body.protocol_record_id)
+        values = importer.prefill_values(import_plan, name=body.name)
+    except importer.ImportError_ as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    parent = (db.query(ProjectParent)
+              .filter(ProjectParent.name == import_plan.project.job_number)
+              .first())
+    if parent is None and import_plan.project.job_number:
+        parent = ProjectParent(name=import_plan.project.job_number)
+        db.add(parent)
+        db.flush()
+
+    project = create_project_for_device(
+        body.device_id,
+        ProjectCreateSchema(parent_id=parent.id if parent else None, **values),
+        db=db)
+
+    importer.bind(db, project, import_plan)
+    db.commit()
+    db.refresh(project)
+    return project
+
 
 @app.get("/sync/status")
 def sync_status(db: Session = Depends(get_db)):

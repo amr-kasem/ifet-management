@@ -388,6 +388,18 @@ class TestResult(Base):
     corrects_attempt_id = Column(String, nullable=True, index=True)
     correction_reason = Column(Text, nullable=True)
 
+    # -- the requirement this attempt was actually run against --------------
+    #
+    # Frozen when the attempt starts, from the mirrored Protocol Section. The
+    # mirror is refreshed and upstream requirements change, so an attempt that
+    # read its requirement at publish time would report having been run against
+    # whatever the requirement says *now* — a false statement about a test that
+    # has already physically happened. The requirement is part of the evidence.
+    #
+    # Null for a job with no Airtable origin: a local job has no upstream
+    # requirement to freeze, and that is a normal state, not missing data.
+    requirement_snapshot = Column(JSON, nullable=True)
+
     # -- lifecycle (contract §4.3) ------------------------------------------
     status = Column(String, nullable=True)              # In Progress | Completed | Aborted
     test_type = Column(String, nullable=True)           # contract option set
