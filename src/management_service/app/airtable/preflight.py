@@ -18,6 +18,13 @@ It checks four claims, and each one has a way of being quietly wrong:
    is the sheet they will work from; a stale row is a wrong instruction.
 4. **The fixture still reads back.** Someone may have cleared the Testing base,
    in which case the verification section describes something no longer there.
+5. **The document's own arithmetic.** Reads + writes + ignored must equal the
+   base, every outbound field must name a phase the outbox actually has, and a
+   field we have decided to withhold must not be counted as one we write. This
+   check exists because all three were wrong at once on 2026-09-08: the counts
+   summed to 160 against a 159-field base, `LabOS Updated At` carried a phase
+   token `every` that `sync.outbox` does not define, and three withheld fields
+   were counted as writes in §1 while §4 said they are never sent.
 """
 
 import argparse
@@ -161,6 +168,54 @@ def main(argv=None):
         missing = need - set(codes)
         if missing:
             warns.append(f"fixture no longer covers {sorted(missing)}")
+
+    # -- 5. the document's arithmetic, from the generated schema ----------
+    print("\n5. The document's counts, and every phase the outbox must know")
+    SCHEMA = SPEC.parent.parent.parent / "contract" / "interface-schema.csv"
+    PHASES = {"create", "terminal", "verdict", "attachment"}
+    if not SCHEMA.exists():
+        warns.append(f"interface-schema.csv not found at {SCHEMA}")
+        print("   SKIPPED — interface-schema.csv not found")
+    else:
+        rows = [r for r in csv.DictReader(open(SCHEMA)) if r["in_testing"] == "yes"]
+        out = [r for r in rows if r["direction"] == "OUT"]
+        reads = [r for r in rows if r["direction"] in ("IN", "READ_ONLY")]
+        ignored = len(rows) - len(out) - len(reads)
+        both = [r for r in rows if r["direction"] == "OUT" and r["direction"] in ("IN",)]
+        print(f"   {len(rows)} fields = {len(reads)} read + {len(out)} write-bound "
+              f"+ {ignored} ignored")
+        if len(reads) + len(out) + ignored != len(rows):
+            fails.append("reads + writes + ignored does not equal the base size")
+        if both:
+            fails.append("a field is counted as both read and written")
+
+        # Every outbound field must name a phase the outbox can dispatch.
+        unknown = {}
+        for r in out:
+            for tok in (t.strip() for t in r["write_phase"].split("+")):
+                if tok and tok not in PHASES:
+                    unknown.setdefault(tok, []).append(r["airtable_field"])
+        if unknown:
+            for tok, fs in sorted(unknown.items()):
+                fails.append(f"write_phase {tok!r} is not a sync.outbox phase "
+                             f"({', '.join(sorted(fs))}) — it would never dispatch")
+        else:
+            print(f"   every write-bound field names one of {sorted(PHASES)}")
+
+        # A withheld field counted as a write is a promise we do not keep.
+        withheld = [r["airtable_field"] for r in out if r["delivery_state"] == "OMITTED"]
+        conditional = [r["airtable_field"] for r in out if r["delivery_state"] == "CONDITIONAL"]
+        always = len(out) - len(withheld) - len(conditional)
+        print(f"   {always} always · {len(conditional)} conditional · "
+              f"{len(withheld)} withheld ({', '.join(sorted(withheld))})")
+        doc = SPEC.parent.parent.parent / "correspondence" / "testing-base-change-document-2026-09-08.md"
+        if doc.exists():
+            text = doc.read_text()
+            for label, n in (("reads", len(reads)), ("always", always),
+                             ("conditional", len(conditional)),
+                             ("withheld", len(withheld)), ("ignored", ignored)):
+                if f"**{n}**" not in text:
+                    warns.append(f"the document does not state {label} = {n}")
 
     print("\n" + "=" * 60)
     for w in warns:
