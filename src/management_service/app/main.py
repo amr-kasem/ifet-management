@@ -784,9 +784,12 @@ async def update_test_result(
     if not test_result:
         raise HTTPException(status_code=404, detail="Test result not found")
     
-    # Create uploads directory if it doesn't exist
-    upload_dir = Path("uploads")
-    upload_dir.mkdir(exist_ok=True)
+    # Use the configured uploads directory, not a second hard-coded one.
+    # This was `Path("uploads")` with its own mkdir until 2026-09-08 — a
+    # duplicate of the module-level path that would silently diverge from it the
+    # moment LABOS_UPLOADS_DIR was set, writing evidence somewhere the static
+    # mount does not serve.
+    upload_dir = uploads_dir
     
     # Handle image upload
     image_path = None

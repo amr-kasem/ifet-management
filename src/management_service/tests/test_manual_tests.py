@@ -157,6 +157,24 @@ class TwoLevels(_Base):
                              json={"type": "ANSI Z97.1"})
         self.assertEqual(r.status_code, 404)
 
+    def test_listing_tests_includes_their_attempts(self):
+        t = self._test()
+        self.start("/projects/1/manual-tests", t["id"])
+        listed = self.client.get("/projects/1/manual-tests/").json()
+        self.assertEqual(len(listed), 1)
+        self.assertEqual(len(listed[0]["trials"]), 1)
+        self.assertEqual(listed[0]["required_option"], "ASTM F588 Grade 40")
+
+    def test_listing_filters_by_type(self):
+        self._test("Forced Entry")
+        self._test("ANSI Z97.1")
+        self.assertEqual(len(self.client.get("/projects/1/manual-tests/").json()), 2)
+        ansi = self.client.get("/projects/1/manual-tests/?type=ANSI Z97.1").json()
+        self.assertEqual([t["type"] for t in ansi], ["ANSI Z97.1"])
+
+    def test_listing_an_unknown_project_is_refused(self):
+        self.assertEqual(self.client.get("/projects/999/manual-tests/").status_code, 404)
+
 
 @unittest.skipIf(TestClient is None, "fastapi not installed in this environment")
 class AttemptLifecycle(_Base):
@@ -247,6 +265,34 @@ class AttemptLifecycle(_Base):
                              files=_jpeg())
         self.assertEqual(r.status_code, 409)
         self.assertIn("requires a correction", r.text)
+
+    def test_the_attempt_is_readable_on_the_shared_route(self):
+        got = self.client.get(f"/test-results/{self.attempt['id']}")
+        self.assertEqual(got.status_code, 200, got.text)
+        self.assertEqual(got.json()["id"], self.attempt["id"])
+        self.assertEqual(got.json()["trial_number"], 1)
+
+    def test_the_legacy_update_route_amends_notes_and_nothing_else(self):
+        """`PUT /test-results/{id}` predates this work and must stay narrow.
+
+        MANUAL_TESTS_API.md tells the UI developer it amends `note` only and is
+        **not** a way to edit a reviewed attempt. That claim was untested, and a
+        route that silently accepted a verdict would make the documentation
+        wrong in the most expensive direction.
+        """
+        self.finish(self.attempt["id"], result=True)
+        self.verdict(self.attempt["id"], test_result="Fail", retest_required=True)
+
+        r = self.client.put(f"/test-results/{self.attempt['id']}",
+                            json={"note": "amended after the fact"})
+        self.assertEqual(r.status_code, 200, r.text)
+
+        after = self.client.get(f"/test-results/{self.attempt['id']}").json()
+        self.assertEqual(after["note"], "amended after the fact")
+        # The verdict is untouched by it.
+        self.assertEqual(after["test_result"], "Fail")
+        self.assertEqual(after["verdict_by"], "reviewer-1")
+        self.assertIs(after["retest_required"], True)
 
     def test_a_photo_attaches_to_the_attempt(self):
         r = self.client.post(f"/test-results/{self.attempt['id']}/photos",
@@ -409,6 +455,22 @@ class Impact(_Base):
         self.assertEqual(v.status_code, 200, v.text)
         self.assertEqual(v.json()["test_result"], "Fail")
         self.assertIs(v.json()["retest_required"], True)
+
+    def test_listing_impact_tests_includes_their_attempts(self):
+        listed = self.client.get("/projects/1/impact-tests/").json()
+        self.assertEqual(len(listed), 1)
+        self.assertEqual(listed[0]["missile"], "Large Missile D")
+        self.assertEqual(len(listed[0]["trials"]), 1)
+        self.assertFalse(listed[0]["finished"])
+
+    def test_finishing_an_impact_test_blocks_further_attempts(self):
+        r = self.client.put(f"/projects/1/impact-tests/{self.test_id}/finish")
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertTrue(r.json()["finished"])
+        again = self.client.post(f"/projects/1/impact-tests/{self.test_id}/trials",
+                                 json={})
+        self.assertEqual(again.status_code, 400)
+        self.assertIn("finished", again.text)
 
     def test_only_an_impact_attempt_records_impacts(self):
         mt = self.client.post("/projects/1/manual-tests/",
