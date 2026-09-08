@@ -66,6 +66,155 @@ def load_mirror():
     return _load("b9c1f60d4e27_mirror_and_requirement_freeze.py", "mirror_mig")
 
 
+def load_split():
+    """`c7e4a2b81f56` — one attempt per impact, splitting the existing rows."""
+    return _load("c7e4a2b81f56_impact_one_attempt_per_impact.py", "split_mig")
+
+
+def seed_legacy_impacts(engine):
+    """The **old** impact shape: attempts holding sequences of shots.
+
+    Four shapes, because the split gets each of them wrong differently:
+
+    * test 91 — one attempt, three impacts, **mixed pass/fail**, with a parent
+      verdict of `Fail` that must not be stamped onto the two that passed;
+    * test 92 — **two** attempts, three impacts then two, which is the case that
+      makes per-attempt renumbering wrong: both groups would claim 1,2,3;
+    * test 93 — an attempt with **no impact at all**, which cannot become an
+      attempt-per-impact and must survive untouched;
+    * photographs on both columns — one per shot, and one attempt-level row with
+      `shot_id IS NULL` for a sequence that is about to stop existing.
+    """
+    with engine.begin() as c:
+        for tid in (91, 92, 93):
+            c.execute(sa.text(
+                "INSERT INTO missile_impact_tests (id,project_id,missile,"
+                "missile_weight,finished) VALUES (:i,1,'Large Missile D',9.0,"
+                "false)"), {"i": tid})
+
+        # (attempt id, test id, trial_number, parent verdict, [(shot id, result)])
+        plan = [
+            (9001, 91, 1, "Fail", [(9101, True), (9102, False), (9103, True)]),
+            (9002, 92, 1, "Pass", [(9104, True), (9105, True), (9106, True)]),
+            (9003, 92, 2, "Fail", [(9107, False), (9108, True)]),
+            (9004, 93, 1, "Pass", []),
+        ]
+        for rid, tid, trial, verdict, shots in plan:
+            c.execute(sa.text(
+                "INSERT INTO test_results (id,trial_number,labos_attempt_id,"
+                "labos_test_id,test_type,status,test_result,result,"
+                "operator_name,terminal_at) VALUES "
+                "(:i,:n,:a,:t,'Impact','Completed',:v,:r,'technician-1',now())"),
+                {"i": rid, "n": trial, "a": f"legacy-attempt-{rid}",
+                 "t": str(uuid.uuid5(_NS, f"impact:{tid}")),
+                 "v": verdict, "r": verdict == "Pass"})
+            c.execute(sa.text(
+                "INSERT INTO impact_test_results (id,missile_impact_test_id) "
+                "VALUES (:i,:p)"), {"i": rid, "p": tid})
+            for n, (sid, result) in enumerate(shots, start=1):
+                c.execute(sa.text(
+                    "INSERT INTO shots (id,shot_number,result,test_result_id,"
+                    "missile_impact_test_id,area,velocity) VALUES "
+                    "(:i,:n,:r,:a,:p,1.5,50.0)"),
+                    {"i": sid, "n": n, "r": result, "a": rid, "p": tid})
+                c.execute(sa.text(
+                    "INSERT INTO test_photos (filename,path,test_result_id,"
+                    "shot_id) VALUES (:f,:p,:a,:s)"),
+                    {"f": f"impact-{sid}.jpg", "p": f"/uploads/impact-{sid}.jpg",
+                     "a": rid, "s": sid})
+        # Attempt-level evidence, for a sequence that is about to stop existing.
+        c.execute(sa.text(
+            "INSERT INTO test_photos (filename,path,test_result_id,shot_id) "
+            "VALUES ('setup.jpg','/uploads/setup.jpg',9001,NULL)"))
+
+
+def check_split(engine):
+    """The five things §4.5a says the split has to get right."""
+    failures = []
+    with engine.connect() as c:
+        # 1. one impact per attempt, everywhere.
+        many = c.execute(sa.text(
+            "SELECT test_result_id, count(*) FROM shots "
+            "WHERE test_result_id IS NOT NULL GROUP BY test_result_id "
+            "HAVING count(*) > 1")).fetchall()
+        if many:
+            failures.append(f"attempts still holding several impacts: {many}")
+
+        # 2. renumbered across the test, not within the old attempt. Test 3 had
+        #    3 shots then 2, so the five impacts must read 1..5 — the case that
+        #    per-attempt numbering would have given 1,2,3,1,2.
+        nums = c.execute(sa.text(
+            "SELECT t.trial_number FROM impact_test_results i "
+            "JOIN test_results t ON t.id = i.id "
+            "WHERE i.missile_impact_test_id = 92 ORDER BY t.trial_number"
+        )).scalars().fetchall()
+        if list(nums) != [1, 2, 3, 4, 5]:
+            failures.append(f"test 92 renumbered {list(nums)}, expected 1..5")
+
+        # 3. `shot_number` mirrors `trial_number`, or the published JSON
+        #    disagrees with Attempt Number and the constraint stops biting.
+        mismatched = c.execute(sa.text(
+            "SELECT s.id, s.shot_number, t.trial_number FROM shots s "
+            "JOIN test_results t ON t.id = s.test_result_id "
+            "WHERE s.shot_number <> t.trial_number")).fetchall()
+        if mismatched:
+            failures.append(f"shot_number does not mirror trial_number: {mismatched}")
+
+        # 4. each attempt's outcome is its own impact's, not the parent's. Test
+        #    2's parent said Fail; two of its three impacts passed.
+        rows = c.execute(sa.text(
+            "SELECT t.trial_number, t.result, s.result FROM impact_test_results i "
+            "JOIN test_results t ON t.id = i.id "
+            "JOIN shots s ON s.test_result_id = t.id "
+            "WHERE i.missile_impact_test_id = 91 ORDER BY t.trial_number"
+        )).fetchall()
+        if [(r[1], r[2]) for r in rows] != [(True, True), (False, False),
+                                            (True, True)]:
+            failures.append(
+                f"test 91 outcomes came from the parent, not the shots: {rows}")
+
+        # 5. photographs followed their impact, and the attempt-level one stayed.
+        orphans = c.execute(sa.text(
+            "SELECT p.id FROM test_photos p JOIN shots s ON s.id = p.shot_id "
+            "WHERE p.test_result_id <> s.test_result_id")).fetchall()
+        if orphans:
+            failures.append(f"photographs left on the wrong attempt: {orphans}")
+        kept = c.execute(sa.text(
+            "SELECT count(*) FROM test_photos WHERE shot_id IS NULL")).scalar()
+        if kept != 1:
+            failures.append(f"attempt-level evidence lost: {kept} row(s), expected 1")
+
+        # The zero-impact attempt survives, untouched and still empty.
+        empty = c.execute(sa.text(
+            "SELECT count(*) FROM impact_test_results i "
+            "JOIN test_results t ON t.id = i.id "
+            "WHERE i.missile_impact_test_id = 93")).scalar()
+        if empty != 1:
+            failures.append(
+                f"the impactless attempt was not left alone: {empty} row(s)")
+
+        # Fresh merge keys: a clone sharing `labos_attempt_id` would merge two
+        # impacts into one Airtable record.
+        dupes = c.execute(sa.text(
+            "SELECT labos_attempt_id, count(*) FROM test_results "
+            "GROUP BY labos_attempt_id HAVING count(*) > 1")).fetchall()
+        if dupes:
+            failures.append(f"duplicate labos_attempt_id after the split: {dupes}")
+    return failures
+
+
+def check_split_is_idempotent(engine, split):
+    """Re-running must not split anything twice."""
+    with engine.connect() as c:
+        before = c.execute(sa.text("SELECT count(*) FROM test_results")).scalar()
+    apply(engine, split, "upgrade")
+    with engine.connect() as c:
+        after = c.execute(sa.text("SELECT count(*) FROM test_results")).scalar()
+    if before != after:
+        return [f"re-running the split changed the row count {before} -> {after}"]
+    return []
+
+
 def check_mirror(engine):
     """The mirror exists, and **has nowhere to put `Value`**.
 
@@ -315,6 +464,7 @@ def main():
     engine = sa.create_engine(url)
     p1, m2, mt, uq = load_p1(), load_m2(), load_mt(), load_uq()
     art, op, mir = load_artifacts(), load_operator(), load_mirror()
+    split = load_split()
 
     if art.down_revision != uq.revision:
         print(f"  FAIL {art.revision} revises {art.down_revision!r}, "
@@ -323,6 +473,10 @@ def main():
     if op.down_revision != art.revision:
         print(f"  FAIL {op.revision} revises {op.down_revision!r}, "
               f"not {art.revision!r}")
+        return 1
+    if split.down_revision != mir.revision:
+        print(f"  FAIL {split.revision} revises {split.down_revision!r}, "
+              f"not {mir.revision!r}")
         return 1
     if mir.down_revision != op.revision:
         print(f"  FAIL {mir.revision} revises {mir.down_revision!r}, "
@@ -334,7 +488,7 @@ def main():
         return 1
     print(f"ordering OK: {p1.revision} -> {m2.revision} -> {mt.revision} "
           f"-> {uq.revision} -> {art.revision} -> {op.revision} "
-          f"-> {mir.revision}")
+          f"-> {mir.revision} -> {split.revision}")
 
     with engine.begin() as conn:
         conn.exec_driver_sql("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
@@ -369,12 +523,26 @@ def main():
     failures += check_artifact_tables(engine)
     failures += check_operator_columns(engine)
     failures += check_mirror(engine)
+
+    # --- one attempt per impact, over the legacy shape ---------------------
+    seed_legacy_impacts(engine)
+    print("seeded the old impact shape: 3 tests, 8 impacts across 4 attempts, "
+          "one attempt with no impact, evidence on both photo columns")
+    apply(engine, split, "upgrade")
+    print(f"impact-split {split.revision} upgraded")
+    split_failures = check_split(engine)
+    failures += split_failures
+    if not split_failures:
+        print("each impact is its own attempt, renumbered across the test, "
+              "outcomes taken from the impacts, evidence followed")
+    failures += check_split_is_idempotent(engine, split)
     if not failures:
         print("artifact delivery keyed on the photograph, publication failures "
               "unique per (attempt, phase), operator_name on all four tables, "
               "mirror present with no column for `Value`")
 
-    for mig, label in ((mir, "mirror-and-freeze"), (op, "run-start-operator"),
+    for mig, label in ((split, "impact-split"),
+                       (mir, "mirror-and-freeze"), (op, "run-start-operator"),
                        (art, "artifact-delivery"),
                        (uq, "attempt-uniqueness"), (mt, "manual-tests"),
                        (m2, "M2"), (p1, "P1")):
