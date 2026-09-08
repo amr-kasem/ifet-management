@@ -156,7 +156,8 @@ result.
 | `PUT /test-results/{id}/finish` | `{"result": true, "note": "...", "testing_continued": "Stopped"}` or `{"abort_reason": "Equipment Fault"}`. `result` required to complete a manual attempt |
 | `PUT /test-results/{id}/verdict` | `{"test_result": "Pass", "verdict_by": "reviewer-1", "retest_required": false, "rationale": "optional"}` |
 | `POST /test-results/{id}/photos` | attempt-level evidence; `multipart/form-data` with `file` and optional `note` |
-| `GET /test-results/{id}` | the attempt (pre-existing route) |
+| `GET /test-results/{id}` | the attempt |
+| `PUT /test-results/{id}` | amend the attempt's `note` / `image_path` only. **Pre-existing route** — it does not touch the verdict or any measurement, and it is not a way to edit a reviewed attempt |
 
 `test_result` must be `Pass`, `Fail` or `Inconclusive` — **not** the Airtable
 spellings `Passed`/`Failed`, which the sync layer translates later.
@@ -199,7 +200,7 @@ fully testable — that is the normal mode, not a degraded one.
 
 ---
 
-## 8. Forced Entry and ANSI Z97.1 — the minimum, deliberately
+## 8. Why Forced Entry and ANSI carry so little — and whose decision that was
 
 Both are recorded as **pass or fail against a named grade or class**, with notes
 and optional photographs. That is the whole model today.
