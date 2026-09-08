@@ -14,7 +14,8 @@ shape, `NOT NULL` where the node has it — then adds attempts of each of the
 four parent types, deliberately carrying the **three formats the migration
 exists to unify**: the P1 uuid5, a random uuid4, and the manual slug.
 
-Chain: P1 -> M2 -> d1a6b93f2e57 -> e5f3a71c8d92, then all four down.
+Chain: P1 -> M2 -> d1a6b93f2e57 -> e5f3a71c8d92 -> f7b2c04e19a5 ->
+a3d8e5c71f04, then all six down.
 """
 
 import os
@@ -36,14 +37,101 @@ from tests.rehearse_p1_migration import load_migration as load_p1    # noqa: E40
 _NS = uuid.UUID("5f2b1c94-3a7e-4d18-9c60-1e8a7d2f4b03")
 
 
-def load_uq():
+def _load(name, alias):
     import importlib.util
     path = (Path(__file__).resolve().parent.parent / "alembic" / "versions"
-            / "e5f3a71c8d92_attempt_number_uniqueness.py")
-    spec = importlib.util.spec_from_file_location("uq_mig", path)
+            / name)
+    spec = importlib.util.spec_from_file_location(alias, path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def load_uq():
+    return _load("e5f3a71c8d92_attempt_number_uniqueness.py", "uq_mig")
+
+
+def load_artifacts():
+    """`f7b2c04e19a5` — per-artifact delivery and durable publication failures."""
+    return _load("f7b2c04e19a5_artifact_delivery.py", "artifact_mig")
+
+
+def load_operator():
+    """`a3d8e5c71f04` — operator identity captured at run start."""
+    return _load("a3d8e5c71f04_run_start_operator.py", "operator_mig")
+
+
+def check_artifact_tables(engine):
+    """The two tables exist, keyed as the design requires, and bite.
+
+    Both hold facts that were previously kept somewhere unable to express them —
+    a photograph's delivery in a per-attempt sequence number, and a refused
+    payload on a column nothing read. So the rehearsal checks the *keys*, not
+    just the table names: the wrong key is exactly how each fact got lost.
+    """
+    failures = []
+    insp = sa.inspect(engine)
+    tables = set(insp.get_table_names())
+    for name in ("sync_artifact_delivery", "sync_publication_failure"):
+        if name not in tables:
+            failures.append(f"{name} was not created")
+    if failures:
+        return failures
+
+    pk = insp.get_pk_constraint("sync_artifact_delivery")["constrained_columns"]
+    if pk != ["photo_id"]:
+        failures.append(f"sync_artifact_delivery is keyed on {pk}, not the photo "
+                        "— a per-attempt key is what discarded retried photos")
+
+    uniques = {u["name"]: u["column_sorted"] if "column_sorted" in u
+               else u["column_names"]
+               for u in insp.get_unique_constraints("sync_publication_failure")}
+    want = "uq_sync_publication_failure_attempt_phase"
+    if want not in uniques:
+        failures.append(f"{want} is missing — a second refusal of one phase "
+                        "would pile up rows nobody reads")
+
+    with engine.begin() as c:
+        c.execute(sa.text(
+            "INSERT INTO sync_publication_failure (attempt_id, phase, error) "
+            "VALUES ('a1', 'terminal', 'first')"))
+    try:
+        with engine.begin() as c:
+            c.execute(sa.text(
+                "INSERT INTO sync_publication_failure (attempt_id, phase, error)"
+                " VALUES ('a1', 'terminal', 'second')"))
+        failures.append("two open failures for one (attempt, phase) were accepted")
+    except sa.exc.IntegrityError:
+        pass
+
+    # `needs_reconciliation` must default false, not null: an artifact nobody has
+    # flagged is not "unknown", it is fine.
+    with engine.begin() as c:
+        c.execute(sa.text(
+            "INSERT INTO sync_artifact_delivery (photo_id, attempt_id) "
+            "VALUES (1, 'a1')"))
+        flag = c.execute(sa.text("SELECT needs_reconciliation FROM "
+                                 "sync_artifact_delivery WHERE photo_id=1")).scalar()
+    if flag is not False:
+        failures.append(f"needs_reconciliation defaulted to {flag!r}, not False")
+
+    with engine.begin() as c:
+        c.execute(sa.text("DELETE FROM sync_artifact_delivery WHERE photo_id=1"))
+        c.execute(sa.text("DELETE FROM sync_publication_failure WHERE attempt_id='a1'"))
+    return failures
+
+
+def check_operator_columns(engine):
+    """All four test tables carry it — the mixin means a partial add breaks the ORM."""
+    failures = []
+    insp = sa.inspect(engine)
+    for table in ("static_tests", "cyclic_tests", "manual_tests",
+                  "missile_impact_tests"):
+        cols = {c["name"] for c in insp.get_columns(table)}
+        if "operator_name" not in cols:
+            failures.append(f"{table} has no operator_name; the column is on the "
+                            "AirtableProtocolRef mixin so every test table needs it")
+    return failures
 
 
 def apply(engine, mig, direction):
@@ -181,13 +269,22 @@ def main():
 
     engine = sa.create_engine(url)
     p1, m2, mt, uq = load_p1(), load_m2(), load_mt(), load_uq()
+    art, op = load_artifacts(), load_operator()
 
+    if art.down_revision != uq.revision:
+        print(f"  FAIL {art.revision} revises {art.down_revision!r}, "
+              f"not {uq.revision!r}")
+        return 1
+    if op.down_revision != art.revision:
+        print(f"  FAIL {op.revision} revises {op.down_revision!r}, "
+              f"not {art.revision!r}")
+        return 1
     if uq.down_revision != mt.revision:
         print(f"  FAIL {uq.revision} revises {uq.down_revision!r}, "
               f"not {mt.revision!r}")
         return 1
     print(f"ordering OK: {p1.revision} -> {m2.revision} -> {mt.revision} "
-          f"-> {uq.revision}")
+          f"-> {uq.revision} -> {art.revision} -> {op.revision}")
 
     with engine.begin() as conn:
         conn.exec_driver_sql("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
@@ -213,14 +310,29 @@ def main():
         print("and it refuses to run at all over a genuine duplicate")
 
     apply(engine, uq, "upgrade")   # re-add after the refusal check removed it
-    for mig, label in ((uq, "attempt-uniqueness"), (mt, "manual-tests"),
+    apply(engine, art, "upgrade")
+    print(f"artifact-delivery {art.revision} upgraded")
+    apply(engine, op, "upgrade")
+    print(f"run-start-operator {op.revision} upgraded")
+    failures += check_artifact_tables(engine)
+    failures += check_operator_columns(engine)
+    if not failures:
+        print("artifact delivery keyed on the photograph, publication failures "
+              "unique per (attempt, phase), operator_name on all four tables")
+
+    for mig, label in ((op, "run-start-operator"), (art, "artifact-delivery"),
+                       (uq, "attempt-uniqueness"), (mt, "manual-tests"),
                        (m2, "M2"), (p1, "P1")):
         apply(engine, mig, "downgrade")
         print(f"{label} downgraded")
-    names = {u["name"] for u in
-             sa.inspect(engine).get_unique_constraints("test_results")}
+    insp = sa.inspect(engine)
+    names = {u["name"] for u in insp.get_unique_constraints("test_results")}
     if "uq_test_results_test_attempt" in names:
         failures.append("downgrade left the constraint behind")
+    left = set(insp.get_table_names()) & {"sync_artifact_delivery",
+                                          "sync_publication_failure"}
+    if left:
+        failures.append(f"downgrade left {sorted(left)} behind")
 
     print()
     if failures:
