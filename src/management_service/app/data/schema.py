@@ -196,6 +196,10 @@ class ProjectSchema(ProjectCreateSchema):
     static_tests: List[StaticTestSchema]
     infiltration_tests: List[InfiltrationTestSchema]
     missile_impact_tests: List[MissileImpactTestSchema]
+    # Added 2026-09-08 for consistency: every other test type on a project is
+    # embedded here, so a UI that reads the project once was getting static,
+    # cyclic, water and impact but silently not Forced Entry or ANSI.
+    manual_tests: List["ManualTestSchema"] = []
     cyclic_tests: List[CyclicTestSchema]
 
     class Config:
@@ -444,3 +448,7 @@ class ImpactTestSchema(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ProjectSchema forward-references ManualTestSchema, which is declared below it.
+ProjectSchema.model_rebuild()

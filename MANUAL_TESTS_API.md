@@ -167,7 +167,38 @@ result.
 `test_result` must be `Pass`, `Fail` or `Inconclusive` — **not** the Airtable
 spellings `Passed`/`Failed`, which the sync layer translates later.
 
-## 6. What the UI needs to supply, and where it comes from
+## 6. How these routes relate to the static/cyclic ones you already use
+
+Same shape, with two deliberate differences worth knowing before you write the
+client.
+
+| | Static / Cyclic | Manual / Impact |
+|---|---|---|
+| Create the test | `POST /projects/{pid}/static_tests/` | `POST /projects/{pid}/manual-tests/` |
+| Address a test by | `{index}` — its ordinal, 0–5 or 0–7 | **`{test_id}`** |
+| Start / record an attempt | `POST …/{index}/trials` | `POST …/{test_id}/trials` |
+| List attempts | `GET …/trials` | `GET …/trials` |
+| Finish the test | `PUT …/{index}/finish` | `PUT …/{test_id}/finish` |
+| Embedded in `ProjectSchema` | yes | yes |
+
+**Why `{test_id}` and not `{index}`.** Static and cyclic tests are generated
+automatically from the design pressures — six and eight of them — so the ordinal
+is meaningful and stable. Manual and impact tests are created by an operator on
+demand, so an index would be an arbitrary counter with nothing to anchor it.
+
+**⚠️ `POST …/trials` means something different here.** On static and cyclic, the
+rig posts a *finished* trial in one call, with its deflections. On these, it
+**starts** an attempt: you get back an `In Progress` attempt, then record impacts
+and photographs against it, then `PUT /test-results/{id}/finish`. Same path
+suffix, two-step instead of one — because a person filling in a form is not an
+instrument reporting a completed measurement.
+
+**Everything project-level still works unchanged.** `GET /devices/{id}/projects/`
+returns the project with `static_tests`, `cyclic_tests`, `infiltration_tests`,
+`missile_impact_tests` **and now `manual_tests`**, so a screen that loads the
+project once sees all five test types.
+
+## 7. What the UI needs to supply, and where it comes from
 
 | Field | Airtable-linked job | LabOS-only job |
 |---|---|---|
@@ -183,7 +214,7 @@ fully testable — that is the normal mode, not a degraded one.
 
 ---
 
-## 7. Things that will bite
+## 8. Things that will bite
 
 - **`test_result` is `Pending` after `finish`.** A screen showing "Completed"
   next to "Pending" is correct, not a bug. It means: tested, awaiting review.
@@ -210,7 +241,7 @@ fully testable — that is the normal mode, not a degraded one.
 
 ---
 
-## 8. Why Forced Entry and ANSI carry so little — and whose decision that was
+## 9. Why Forced Entry and ANSI carry so little — and whose decision that was
 
 Both are recorded as **pass or fail against a named grade or class**, with notes
 and optional photographs. That is the whole model today.
@@ -232,7 +263,7 @@ groups both workflows natively. That stays true whatever detail we add locally.
 
 ---
 
-## 9. Running it locally
+## 10. Running it locally
 
 ```bash
 docker compose -f src/management_service/tests/postgres_harness/docker-compose.yaml up -d

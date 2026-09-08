@@ -3705,6 +3705,14 @@
             "type": "array",
             "title": "Missile Impact Tests"
           },
+          "manual_tests": {
+            "items": {
+              "$ref": "#/components/schemas/ManualTestSchema"
+            },
+            "type": "array",
+            "title": "Manual Tests",
+            "default": []
+          },
           "cyclic_tests": {
             "items": {
               "$ref": "#/components/schemas/CyclicTestSchema"

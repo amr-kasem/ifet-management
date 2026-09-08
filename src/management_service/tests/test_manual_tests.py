@@ -172,6 +172,24 @@ class TwoLevels(_Base):
         ansi = self.client.get("/projects/1/manual-tests/?type=ANSI Z97.1").json()
         self.assertEqual([t["type"] for t in ansi], ["ANSI Z97.1"])
 
+    def test_the_project_embeds_manual_tests_like_every_other_type(self):
+        """A UI reading the project once must not silently miss these.
+
+        `ProjectSchema` already embedded static, cyclic, water and impact. It
+        did not embed manual tests until 2026-09-08, so Forced Entry and ANSI
+        were the only test types invisible from the project payload.
+        """
+        t = self._test()
+        self.start("/projects/1/manual-tests", t["id"])
+        project = self.client.get("/devices/1/projects/").json()[0]
+        self.assertEqual([m["type"] for m in project["manual_tests"]],
+                         ["Forced Entry"])
+        self.assertEqual(len(project["manual_tests"][0]["trials"]), 1)
+        # and the pre-existing embeds still work
+        for key in ("static_tests", "cyclic_tests", "missile_impact_tests",
+                    "infiltration_tests"):
+            self.assertIn(key, project)
+
     def test_listing_an_unknown_project_is_refused(self):
         self.assertEqual(self.client.get("/projects/999/manual-tests/").status_code, 404)
 
