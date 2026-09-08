@@ -105,7 +105,18 @@ def begin(existing_trials, *, test_type, test_name=None, operator_name=None,
         "test_name": test_name,
         "operator_name": operator_name,
         "test_rig": test_rig,
-        "retest_required": False,
+        # **Not `False`.** §6: "Retest Required is meaningful only once review
+        # exists, never inferred false from an unreviewed checkbox." Stamping
+        # False at creation is exactly that, and it made the two initialisation
+        # paths behave differently: `_start_attempt` (manual and impact) left it
+        # NULL, so their terminal payload omitted the key; this path set it, so
+        # the envelope's phase guard refused every rig terminal write —
+        # `'Retest Required' belongs to the first-review phase`. The rig types
+        # therefore never queued a terminal at all.
+        #
+        # Left out entirely, so the column keeps its NULL default and both paths
+        # agree. `d1a6b93f2e57` widened it to nullable for this reason; this line
+        # predated that and was not revisited.
         "testing_start_date": now,
         "labos_created_at": now,
         "labos_updated_at": now,
@@ -232,3 +243,35 @@ def next_attempt_number(session, labos_test_id):
     return (session.query(func.coalesce(func.max(TestResult.trial_number), 0))
             .filter(TestResult.labos_test_id == labos_test_id)
             .scalar()) + 1
+
+
+def complete_rig_trial(attempt, body, now=None):
+    """Terminate a rig-posted stage, if the post carried enough to terminate.
+
+    **Why this exists.** Static and cyclic post a *finished* stage in one call,
+    but the route recorded it as `In Progress` and never terminated it — so the
+    terminal phase could not be built and only `create` was ever queued. The
+    three manual types go through `PUT /test-results/{id}/finish`; the rig types
+    had no equivalent, which is how "all five types" was true of identity and
+    false of the lifecycle.
+
+    Returns True when the attempt was terminated. Returns False, leaving it
+    `In Progress`, when the post carried no `operator_name` — contract §4.5
+    requires an operator on a terminal write and **LabOS does not invent one**.
+    Production firmware sends `deflections` alone today, so False is the current
+    reality for a real rig, and it now surfaces as a recorded publication
+    failure rather than silence.
+    """
+    if not getattr(body, "operator_name", None):
+        return False
+    now = now or _now()
+    attempt.operator_name = body.operator_name
+    attempt.status = COMPLETED
+    attempt.result = body.result if body.result is not None else attempt.result
+    attempt.testing_continued = (body.testing_continued
+                                 or attempt.testing_continued or "Stopped")
+    attempt.note = body.note or attempt.note
+    attempt.testing_end_date = now
+    attempt.terminal_at = now
+    attempt.labos_updated_at = now
+    return True

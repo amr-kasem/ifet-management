@@ -30,7 +30,8 @@ against SQLite in memory and the production path against Postgres unchanged.
 import datetime as dt
 
 from sqlalchemy import (
-    Column, DateTime, Integer, JSON, String, Text, UniqueConstraint, case, func,
+    Boolean, Column, DateTime, Integer, JSON, String, Text, UniqueConstraint,
+    case, func,
 )
 from sqlalchemy.exc import IntegrityError
 
@@ -153,6 +154,184 @@ class SyncAttemptState(Base):
 
 class Superseded(Exception):
     """Raised internally when an entry is older than what Airtable already has."""
+
+
+class SyncArtifactDelivery(Base):
+    """Has this particular photograph reached Airtable? One row per artifact.
+
+    **Separate from `SyncAttemptState` on purpose.** That table answers "what
+    does Airtable hold for this record", by sequence number. It cannot answer
+    "has this file landed", and using it to try is what discarded retried
+    photographs: the verdict advanced the shared sequence past every earlier
+    attachment.
+
+    Keyed on the photo, so the two properties the contract asks for are both
+    expressible (§6):
+
+    * **not discarded** — a retry after the verdict is still undelivered here,
+      whatever the record's sequence has reached;
+    * **not uploaded twice** — a redelivery of a photograph already recorded
+      here is a no-op, so a request that timed out after Airtable committed it
+      does not attach the same file again.
+
+    `airtable_attachment_id` is what makes the second property real rather than
+    hopeful: it is the id Airtable returned, so an ambiguous upload can be
+    reconciled against what is actually on the record instead of guessed at.
+    """
+
+    __tablename__ = "sync_artifact_delivery"
+
+    photo_id = Column(Integer, primary_key=True)
+    attempt_id = Column(String, nullable=False, index=True)
+    # NULL until it lands. Present = delivered, and says where.
+    airtable_record_id = Column(String, nullable=True)
+    airtable_attachment_id = Column(String, nullable=True)
+    content_hash = Column(String, nullable=True)
+    delivered_at = Column(DateTime(timezone=True), nullable=True)
+    # Set when a send returned ambiguously (a lost response, a timeout after
+    # commit). Contract §6: reconcile the remote attachments rather than
+    # blindly appending, and a single absent read is not proof of failure.
+    needs_reconciliation = Column(Boolean, nullable=False, default=False)
+    updated_at = Column(DateTime(timezone=True), nullable=True)
+
+    def __repr__(self):
+        state = "delivered" if self.airtable_attachment_id else "pending"
+        return (f"<SyncArtifactDelivery photo={self.photo_id} {state}"
+                f"{' NEEDS-RECONCILIATION' if self.needs_reconciliation else ''}>")
+
+
+def artifact_delivery(session, photo_id, attempt_id=None):
+    """The delivery row for one photograph, created pending if absent."""
+    row = session.get(SyncArtifactDelivery, photo_id)
+    if row is None and attempt_id is not None:
+        row = SyncArtifactDelivery(photo_id=photo_id, attempt_id=attempt_id,
+                                   needs_reconciliation=False)
+        session.add(row)
+    return row
+
+
+def artifact_is_delivered(session, photo_id):
+    """True only if this photograph is recorded as landed. Never inferred."""
+    row = session.get(SyncArtifactDelivery, photo_id)
+    return bool(row and row.airtable_attachment_id)
+
+
+def mark_artifact_delivered(session, photo_id, attempt_id, *,
+                            airtable_record_id=None, attachment_id=None,
+                            content_hash=None, now=None):
+    row = artifact_delivery(session, photo_id, attempt_id)
+    row.airtable_record_id = airtable_record_id or row.airtable_record_id
+    row.airtable_attachment_id = attachment_id or row.airtable_attachment_id
+    row.content_hash = content_hash or row.content_hash
+    row.needs_reconciliation = False
+    row.delivered_at = now or _now()
+    row.updated_at = row.delivered_at
+    return row
+
+
+def mark_artifact_ambiguous(session, photo_id, attempt_id, now=None):
+    """A send whose outcome we do not know. Park for reconciliation, never retry blind.
+
+    Contract §6: after an ambiguous upload, reconcile the remote attachments and
+    wait for any outstanding request to settle; a single immediate absent read is
+    not proof of failure, and blindly appending is how one photograph becomes two.
+    """
+    row = artifact_delivery(session, photo_id, attempt_id)
+    row.needs_reconciliation = True
+    row.updated_at = now or _now()
+    return row
+
+
+def artifacts_needing_reconciliation(session):
+    return (session.query(func.count(SyncArtifactDelivery.photo_id))
+            .filter(SyncArtifactDelivery.needs_reconciliation.is_(True))
+            .scalar()) or 0
+
+
+class SyncPublicationFailure(Base):
+    """A phase we refused to queue, kept so it can be seen and repaired.
+
+    **The gap this closes.** `publish._refuse` wrote the reason onto the attempt
+    and nothing read it: `state.status()` computes from the queue and the worker,
+    so with no queue entry the headline read `Synced` while the attempt had in
+    fact never been published — and the retry route acts on queue entries, which
+    do not exist for these. A failure that is invisible *and* unrepairable is
+    worse than a parked entry, because a parked entry at least stops the queue.
+
+    `payload_snapshot` holds the values the envelope refused, verbatim. Repair
+    must not re-derive them: by the time a human looks, the attempt may have been
+    reviewed, and rebuilding the payload would silently repair a *different*
+    phase from the one that failed.
+
+    One open row per `(attempt_id, phase)`, so a second refusal of the same phase
+    updates rather than accumulating rows nobody reads.
+    """
+
+    __tablename__ = "sync_publication_failure"
+    __table_args__ = (
+        UniqueConstraint("attempt_id", "phase",
+                         name="uq_sync_publication_failure_attempt_phase"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    attempt_id = Column(String, nullable=False, index=True)
+    phase = Column(String, nullable=False)
+    payload_snapshot = Column(JSON, nullable=True)
+    payload_updated_at = Column(DateTime(timezone=True), nullable=True)
+    error = Column(Text, nullable=False)
+    # False for a refusal no retry can fix on its own — a missing Airtable
+    # linkage needs someone to bind the project first.
+    recoverable = Column(Boolean, nullable=False, default=True)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=True)
+    updated_at = Column(DateTime(timezone=True), nullable=True)
+
+    def __repr__(self):
+        return (f"<SyncPublicationFailure {self.attempt_id} {self.phase} "
+                f"{'resolved' if self.resolved_at else 'OPEN'}>")
+
+
+def record_publication_failure(session, attempt_id, phase, error, *,
+                               payload_snapshot=None, payload_updated_at=None,
+                               recoverable=True, now=None):
+    """Persist a refused publication. Idempotent per (attempt, phase)."""
+    now = now or _now()
+    row = (session.query(SyncPublicationFailure)
+           .filter(SyncPublicationFailure.attempt_id == attempt_id,
+                   SyncPublicationFailure.phase == phase).first())
+    if row is None:
+        row = SyncPublicationFailure(attempt_id=attempt_id, phase=phase,
+                                     created_at=now)
+        session.add(row)
+    row.error = str(error)[:4000]
+    row.payload_snapshot = payload_snapshot
+    row.payload_updated_at = payload_updated_at
+    row.recoverable = recoverable
+    row.resolved_at = None
+    row.updated_at = now
+    return row
+
+
+def open_publication_failures(session, recoverable_only=False):
+    q = (session.query(SyncPublicationFailure)
+         .filter(SyncPublicationFailure.resolved_at.is_(None)))
+    if recoverable_only:
+        q = q.filter(SyncPublicationFailure.recoverable.is_(True))
+    return q.order_by(SyncPublicationFailure.attempt_id,
+                      SyncPublicationFailure.phase).all()
+
+
+def failed_publication_count(session):
+    return (session.query(func.count(SyncPublicationFailure.id))
+            .filter(SyncPublicationFailure.resolved_at.is_(None))
+            .scalar()) or 0
+
+
+def resolve_publication_failure(session, row, now=None):
+    """Mark a failure repaired. Called only after its phase is queued."""
+    row.resolved_at = now or _now()
+    row.updated_at = row.resolved_at
+    return row
 
 
 def enqueue(session, attempt_id, phase, payload, payload_updated_at=None,
@@ -373,13 +552,31 @@ def reassert_lease(session, entry, epoch, now=None, lease_seconds=DEFAULT_LEASE_
 
 
 def is_superseded(session, entry):
-    """True if Airtable already holds something newer for this attempt.
+    """True if Airtable already holds something newer for this **record**.
 
     Ordering stops *us* sending out of sequence. This catches the other case: a
     delivery we recorded as failed that actually succeeded, replayed after a
     later phase has already landed. Without it, a duplicate `terminal` can reset
     a reviewed record to `Pending`.
+
+    **Attachments are never superseded, and this is not an exception to the
+    rule — it is the rule read correctly.** Everything above is about one
+    Airtable *record* being overwritten by a stale version of itself. A
+    photograph is a different artifact: it is not a version of the record, and
+    no later phase makes it obsolete. Contract §6 says an attachment "may finish
+    after terminal state without changing measured evidence" and that one sender
+    owns one artifact at a time — per-artifact facts, not per-record ones.
+
+    The watermark was consulted for every phase until 2026-09-08, and because
+    both channels share one `attempt_seq` counter, delivering the verdict
+    advanced it past any earlier attachment. A parked photograph retried after
+    the verdict was then classified superseded and **silently discarded** —
+    marked `done` having never been sent. Splitting the queue heads fixed
+    head-of-line blocking and left this; the two are separate mechanisms and
+    both needed the channel distinction.
     """
+    if entry.phase == ATTACHMENT:
+        return False
     state = session.get(SyncAttemptState, entry.attempt_id)
     if state is None:
         return False
@@ -391,7 +588,18 @@ def is_superseded(session, entry):
 
 
 def mark_done(session, entry, airtable_record_id=None, now=None):
-    """Record a successful delivery and advance the attempt's watermark."""
+    """Record a successful delivery. Only a record phase moves the watermark.
+
+    **An attachment neither consults nor advances `delivered_seq`.** It is
+    tracked per artifact instead — `SyncArtifactDelivery`, keyed on the photo —
+    because the question "has this photograph landed?" is not answerable by a
+    per-attempt sequence number, and answering it with one is what silently
+    discarded retried photographs.
+
+    An attachment still records the Airtable record id it attached to, since
+    that is a fact about the record and is needed to reconcile an ambiguous
+    upload.
+    """
     now = now or _now()
     entry.state = DONE
     entry.leased_until = None
@@ -402,7 +610,7 @@ def mark_done(session, entry, airtable_record_id=None, now=None):
     if state is None:
         state = SyncAttemptState(attempt_id=entry.attempt_id, delivered_seq=0)
         session.add(state)
-    if entry.attempt_seq > (state.delivered_seq or 0):
+    if entry.phase != ATTACHMENT and entry.attempt_seq > (state.delivered_seq or 0):
         state.delivered_seq = entry.attempt_seq
         state.delivered_updated_at = entry.payload_updated_at
     if airtable_record_id:

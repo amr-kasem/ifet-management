@@ -918,5 +918,289 @@ class TheProductionSender(_Base):
         self.assertGreaterEqual(body["attachment_backlog"], 1)
 
 
+class ArtifactDeliveryIsTrackedPerPhotograph(_Base):
+    """The discard bug, and the double-upload it would invite.
+
+    Reported and reproduced by audit 2026-09-08: channels had separate queue
+    heads but shared one delivery watermark, so once the verdict advanced
+    `delivered_seq`, retrying an earlier parked photograph classified it
+    superseded and marked it `done` **having never sent it**.
+    """
+
+    def _attempt_with_photo(self):
+        r = self.client.post("/projects/1/manual-tests/",
+                             json={"type": "Forced Entry", "required_option": "g"})
+        test_id = r.json()["id"]
+        self.link_test("manual_tests", test_id)
+        a = self.client.post(f"/projects/1/manual-tests/{test_id}/trials",
+                             json={"operator_name": "technician-1"}).json()
+        self.client.post(f"/test-results/{a['id']}/photos", files=_jpeg())
+        self.client.put(f"/test-results/{a['id']}/finish",
+                        json={"result": True, "testing_continued": "Stopped"})
+        self.client.put(f"/test-results/{a['id']}/verdict",
+                        json={"test_result": "Pass", "verdict_by": "reviewer-1",
+                              "retest_required": False})
+        return a["labos_attempt_id"], a["id"]
+
+    def test_an_undelivered_photo_survives_a_retry_after_the_verdict(self):
+        from app.sync import outbox, worker
+        aid, _ = self._attempt_with_photo()
+
+        # Deliver everything except the attachment, which parks.
+        s = self.Session()
+        try:
+            worker.drain(s, self._refusing_attachments())
+            attach = (s.query(outbox.SyncOutbox)
+                      .filter(outbox.SyncOutbox.attempt_id == aid,
+                              outbox.SyncOutbox.phase == "attachment").one())
+            self.assertEqual(attach.state, "parked")
+            # The verdict has landed, so the shared watermark is past this entry.
+            state = s.get(outbox.SyncAttemptState, aid)
+            self.assertGreater(state.delivered_seq, attach.attempt_seq,
+                               "the premise: the watermark is past the photo")
+
+            # Repair it and retry with a sender that accepts.
+            outbox.resume(s, attach.id)
+            s.commit()
+            sent = []
+            worker.drain(s, lambda e: sent.append(e.phase) or "recPHOTO001")
+            s.refresh(attach)
+        finally:
+            s.close()
+
+        self.assertIn("attachment", sent,
+                      "the retried photograph must actually be SENT, not "
+                      "classified superseded and silently discarded")
+        self.assertEqual(attach.state, "done")
+
+    def test_a_delivered_photo_is_never_uploaded_twice(self):
+        from app.sync import outbox, worker
+        aid, pk = self._attempt_with_photo()
+        s = self.Session()
+        try:
+            sent = []
+            worker.drain(s, lambda e: sent.append(e.phase) or "recPHOTO001")
+            first = sent.count("attachment")
+            entry = (s.query(outbox.SyncOutbox)
+                     .filter(outbox.SyncOutbox.attempt_id == aid,
+                             outbox.SyncOutbox.phase == "attachment").one())
+            photo_id = entry.payload["photo"]["id"]
+            self.assertTrue(outbox.artifact_is_delivered(s, photo_id),
+                            "a delivered photograph must be recorded as such")
+
+            # Force a redelivery, as a lost response would.
+            entry.state = outbox.PENDING
+            entry.next_attempt_at = None
+            s.commit()
+            sent.clear()
+            worker.drain(s, lambda e: sent.append(e.phase) or "recPHOTO001")
+        finally:
+            s.close()
+        self.assertEqual(first, 1)
+        self.assertEqual(sent.count("attachment"), 0,
+                         "a photograph Airtable already holds must not be "
+                         "attached a second time")
+
+    def _refusing_attachments(self):
+        from app.airtable.errors import AirtableValidationError
+        from app.sync import outbox as ob
+
+        def send(entry):
+            if entry.phase == ob.ATTACHMENT:
+                raise AirtableValidationError("uploader not built")
+            return "recRECORD0001"
+        return send
+
+
+class FailedPublicationIsVisibleAndRepairable(_Base):
+    """A refused payload used to read `Synced` and had nothing to retry."""
+
+    def _linked_but_unbuildable(self):
+        """A linked attempt whose terminal payload the envelope will refuse.
+
+        Finishing without `testing_continued` leaves a terminal-required field
+        absent, which is a refusal on our side rather than an Airtable problem —
+        exactly the class of failure that had no queue entry.
+        """
+        r = self.client.post("/projects/1/manual-tests/",
+                             json={"type": "Forced Entry", "required_option": "g"})
+        test_id = r.json()["id"]
+        self.link_test("manual_tests", test_id)
+        a = self.client.post(f"/projects/1/manual-tests/{test_id}/trials",
+                             json={"operator_name": "technician-1"}).json()
+        self.client.put(f"/test-results/{a['id']}/finish", json={"result": True})
+        return a["labos_attempt_id"], a["id"]
+
+    def test_a_refused_payload_is_recorded_and_shows_in_status(self):
+        aid, _ = self._linked_but_unbuildable()
+        body = self.client.get("/sync/status").json()
+        self.assertGreaterEqual(body["failed_publications"], 1,
+                                "a refused publication must be counted")
+        self.assertEqual(body["status"], "Retry Required",
+                         "it must NOT read Synced — nothing is queued, and that "
+                         "is exactly why it was invisible before")
+
+        failures = self.client.get("/sync/failures").json()
+        self.assertGreaterEqual(failures["count"], 1)
+        row = [f for f in failures["failures"] if f["attempt_id"] == aid][0]
+        self.assertEqual(row["phase"], "terminal")
+        self.assertTrue(row["recoverable"])
+        self.assertIn("Testing Continued", row["error"])
+
+    def test_repair_requeues_once_the_data_is_fixed_and_409s_before(self):
+        aid, pk = self._linked_but_unbuildable()
+        fid = [f for f in self.client.get("/sync/failures").json()["failures"]
+               if f["attempt_id"] == aid][0]["id"]
+
+        # Still broken: repair must refuse rather than queue a bad payload.
+        again = self.client.post(f"/sync/failures/{fid}/repair")
+        self.assertEqual(again.status_code, 409, again.text)
+        self.assertIn("Still refused", again.json()["detail"])
+
+        # Fix the data the way an operator would, then repair.
+        s = self.Session()
+        try:
+            from app.data.models import TestResult
+            row = s.query(TestResult).filter(
+                TestResult.labos_attempt_id == aid).one()
+            row.testing_continued = "Stopped"
+            s.commit()
+        finally:
+            s.close()
+
+        ok = self.client.post(f"/sync/failures/{fid}/repair")
+        self.assertEqual(ok.status_code, 200, ok.text)
+        self.assertEqual(ok.json()["queued_phase"], "terminal")
+
+        phases = [e[0] for e in self.queue(aid, channel="record")]
+        self.assertEqual(phases, ["create", "terminal"])
+        self.assertEqual(self.client.get("/sync/status").json()
+                         ["failed_publications"], 0,
+                         "a repaired failure must stop counting")
+
+    def test_an_incomplete_binding_is_recorded_as_not_repairable(self):
+        """No retry fixes a missing protocol id — say so instead of looping."""
+        r = self.client.post("/projects/1/manual-tests/",
+                             json={"type": "Forced Entry", "required_option": "g"})
+        # deliberately NOT linked: the project has ids, the test does not
+        a = self.client.post(f"/projects/1/manual-tests/{r.json()['id']}/trials",
+                             json={"operator_name": "technician-1"}).json()
+        rows = [f for f in self.client.get("/sync/failures").json()["failures"]
+                if f["attempt_id"] == a["labos_attempt_id"]]
+        self.assertEqual(len(rows), 1)
+        self.assertFalse(rows[0]["recoverable"])
+        r2 = self.client.post(f"/sync/failures/{rows[0]['id']}/repair")
+        self.assertEqual(r2.status_code, 409)
+        self.assertIn("Bind the Airtable records", r2.json()["detail"])
+
+
+class RigTypesCompleteTheirLifecycle(_Base):
+    """Static and Cycles through every phase, via the real routes."""
+
+    def _rig_test(self, kind):
+        table = "static_tests" if kind == "static" else "cyclic_tests"
+        s = self.Session()
+        try:
+            if kind == "static":
+                s.execute(sa.text(
+                    "INSERT INTO static_tests (id, finished, index, "
+                    "pressure_factor, pressure, duration, type, preset, "
+                    "project_id, airtable_protocol_id, airtable_section_id, "
+                    "airtable_section_name) VALUES (1, false, 0, '0.75', 45.0, "
+                    "10, 'static', false, 1, :p, :sec, 'DP (+) (PSF)')"),
+                    {"p": REC["protocol"], "sec": REC["section"]})
+            else:
+                s.execute(sa.text(
+                    "INSERT INTO cyclic_tests (id, finished, index, type, "
+                    "cycles, low_pressure, high_pressure, resume, current_cycle,"
+                    " preset, project_id, airtable_protocol_id, "
+                    "airtable_section_id, airtable_section_name) VALUES "
+                    # current_cycle 1000: the rig has run the stage, which is
+                    # what `Cycles Completed` reports. 0 would mean it ran none.
+                    "(1, false, 0, 'cyclic', 1000, 30.0, 60.0, false, 1000, "
+                    "false, 1, :p, :sec, 'DP (+) (PSF)')"),
+                    {"p": REC["protocol"], "sec": REC["section"]})
+            s.commit()
+        finally:
+            s.close()
+        return "static_tests" if kind == "static" else "cyclic-tests"
+
+    def _attempt_id(self):
+        from app.data.models import TestResult
+        s = self.Session()
+        try:
+            return s.query(TestResult).one().labos_attempt_id
+        finally:
+            s.close()
+
+    def _post_trial(self, kind, body):
+        path = ("static_tests" if kind == "static" else "cyclic-tests")
+        return self.client.post(f"/projects/1/{path}/0/trials", json=body)
+
+    def _check(self, kind):
+        self._rig_test(kind)
+        r = self._post_trial(kind, {
+            "deflections": [{"deflection_gauge": "g1", "max_deflection": 1234.0,
+                             "permanent_deflection": 12.0, "recovery": 60.0}],
+            "operator_name": "technician-1", "result": True,
+            "testing_continued": "Stopped"})
+        self.assertIn(r.status_code, (200, 201), r.text)
+        # The rig response schema does not expose `labos_attempt_id`, so read it
+        # from the row rather than asserting against None — which would have
+        # made `queue(None)` return every entry and passed by accident.
+        aid = self._attempt_id()
+        phases = [e[0] for e in self.queue(aid, channel="record")]
+        self.assertEqual(phases, ["create", "terminal"],
+                         f"{kind}: a rig stage is posted finished, so it must "
+                         "reach terminal in the same call")
+        return aid
+
+    def test_both_initialisation_paths_agree_on_retest_required(self):
+        """One rule, two creation paths — pinned so they cannot diverge again.
+
+        `attempts.begin()` (static, cyclic) stamped `retest_required = False`
+        while `_start_attempt` (manual, impact) left it NULL. §6 forbids the
+        first outright, and the practical effect was that the envelope's phase
+        guard refused **every rig terminal write**, so those two types never
+        queued a terminal at all.
+        """
+        from app.data import attempts
+        kwargs = attempts.begin([], test_type="Static Load",
+                                kind=attempts.STATIC, parent_id=1)
+        self.assertNotIn("retest_required", kwargs,
+                         "creation must not answer a question only a reviewer "
+                         "can answer")
+
+    def test_static_reaches_terminal(self):
+        self._check("static")
+
+    def test_cyclic_reaches_terminal(self):
+        self._check("cyclic")
+
+    def test_without_an_operator_it_stays_open_and_is_recorded(self):
+        """LabOS does not invent an operator, and does not hide the refusal.
+
+        This is what production firmware does today: it posts `deflections`
+        alone. The attempt stays In Progress, no terminal is queued, and the
+        reason is visible — rather than the silence that made this look fine.
+        """
+        self._rig_test("static")
+        r = self._post_trial("static", {
+            "deflections": [{"deflection_gauge": "g1", "max_deflection": 1.0,
+                             "permanent_deflection": 0.0, "recovery": 60.0}]})
+        self.assertIn(r.status_code, (200, 201), r.text)
+        aid = self._attempt_id()
+        self.assertEqual([e[0] for e in self.queue(aid, channel="record")],
+                         ["create"])
+        from app.data.models import TestResult
+        s = self.Session()
+        try:
+            row = s.query(TestResult).filter(
+                TestResult.labos_attempt_id == aid).one()
+            self.assertEqual(row.status, "In Progress")
+        finally:
+            s.close()
+
+
 if __name__ == "__main__":
     unittest.main()

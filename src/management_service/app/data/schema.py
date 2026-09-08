@@ -34,7 +34,27 @@ class StaticTestUpdateSchema(BaseModel):
         from_attributes = True
         
 class StaticTestResultCreateSchema(BaseModel):
+    """What the rig posts for one completed stage.
+
+    **The lifecycle fields are optional and additive**, because production
+    firmware sends `deflections` alone and must keep working. When they are
+    supplied the route completes the attempt in the same call — which matches
+    what actually happened, since the rig posts a *finished* stage rather than
+    starting one (plan §4.5).
+
+    Without `operator_name` the attempt stays `In Progress` and its terminal
+    payload cannot be built: contract §4.5 requires an operator on a terminal
+    write and LabOS does not invent one. That refusal is now **visible** in
+    `GET /sync/failures` rather than silent, which is the honest behaviour for a
+    rig that has not yet been told to send it (TC3).
+    """
+
     deflections: List[DeflectionCreateSchema]
+    operator_name: Optional[str] = None
+    result: Optional[bool] = None
+    testing_continued: Optional[str] = None
+    note: Optional[str] = None
+
     class Config:
         from_attributes = True
         
@@ -134,7 +154,15 @@ class CyclicTestUpdateStatusSchema(BaseModel):
         from_attributes = True
 
 class CyclicTestResultCreateSchema(BaseModel):
+    """As `StaticTestResultCreateSchema` — see its docstring for why these are
+    optional and what happens when `operator_name` is absent."""
+
     deflections: List[DeflectionCreateSchema]
+    operator_name: Optional[str] = None
+    result: Optional[bool] = None
+    testing_continued: Optional[str] = None
+    note: Optional[str] = None
+
     class Config:
         from_attributes = True
         

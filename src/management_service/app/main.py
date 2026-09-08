@@ -443,6 +443,12 @@ def create_static_test_trial(project_id: int, static_test_index: int, trial_data
     # yet know a gauge had been read.
     db.flush()
     publish.record_phase(db, new_trial, publish.CREATE)
+    # The rig posted a finished stage, so terminate it in the same call when the
+    # post carried an operator. Without one the attempt stays In Progress and
+    # the refusal is recorded rather than silent — see `complete_rig_trial`.
+    if attempts.complete_rig_trial(new_trial, trial_data):
+        db.flush()
+        publish.record_phase(db, new_trial, publish.TERMINAL)
     db.commit()
     db.refresh(new_trial)
     return new_trial
@@ -636,6 +642,12 @@ def create_cyclic_test_trial(project_id: int, cyclic_test_index: int, trial_data
     # yet know a gauge had been read.
     db.flush()
     publish.record_phase(db, new_trial, publish.CREATE)
+    # The rig posted a finished stage, so terminate it in the same call when the
+    # post carried an operator. Without one the attempt stays In Progress and
+    # the refusal is recorded rather than silent — see `complete_rig_trial`.
+    if attempts.complete_rig_trial(new_trial, trial_data):
+        db.flush()
+        publish.record_phase(db, new_trial, publish.TERMINAL)
     db.commit()
     db.refresh(new_trial)
     return new_trial
@@ -1650,6 +1662,79 @@ def sync_queue(state: Optional[str] = None, limit: int = 100,
             "last_error": e.last_error,
         } for e in entries],
     }
+
+
+@app.get("/sync/failures")
+def sync_failures(db: Session = Depends(get_db)):
+    """Payloads LabOS refused to queue — the failures with no queue entry.
+
+    These are invisible in `/sync/queue` by construction: they never got an
+    entry. Until they were persisted, the headline status read `Synced` for an
+    attempt that had never been published, and there was nothing to retry.
+
+    `recoverable` distinguishes the two kinds. A payload our own envelope
+    rejected is recoverable — fix the defect, repair the phase. An attempt whose
+    Airtable linkage is incomplete is **not**: no retry helps until someone
+    binds the protocol and section, and saying otherwise would send an operator
+    round a loop.
+    """
+    rows = outbox_mod.open_publication_failures(db)
+    return {
+        "count": len(rows),
+        "failures": [{
+            "id": r.id,
+            "attempt_id": r.attempt_id,
+            "phase": r.phase,
+            "error": r.error,
+            "recoverable": r.recoverable,
+            "payload_updated_at": r.payload_updated_at.isoformat()
+                                  if r.payload_updated_at else None,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        } for r in rows],
+    }
+
+
+@app.post("/sync/failures/{failure_id}/repair")
+def sync_repair(failure_id: int, db: Session = Depends(get_db)):
+    """Rebuild and re-queue one refused phase. Sends nothing itself.
+
+    Repair goes back through `publish.record_phase`, so the payload is built by
+    the same code the route would have used and is subject to the same envelope
+    rules — a repair that bypassed them could queue exactly the payload that was
+    refused. If it is refused again, the failure row is updated with the new
+    reason rather than resolved, and this returns 409: the defect is still there.
+
+    Refused for a non-recoverable failure, because re-running it cannot help.
+    """
+    row = (db.query(outbox_mod.SyncPublicationFailure)
+           .filter(outbox_mod.SyncPublicationFailure.id == failure_id).first())
+    if not row:
+        raise HTTPException(status_code=404, detail="Failure record not found")
+    if row.resolved_at is not None:
+        raise HTTPException(status_code=400,
+                            detail="This failure is already resolved.")
+    if not row.recoverable:
+        raise HTTPException(
+            status_code=409,
+            detail=f"This failure is not repairable by retry: {row.error} "
+                   "Bind the Airtable records for this job, then repair.")
+
+    attempt = (db.query(TestResult)
+               .filter(TestResult.labos_attempt_id == row.attempt_id).first())
+    if not attempt:
+        raise HTTPException(status_code=404,
+                            detail="The attempt this failure refers to is gone.")
+
+    entry = publish.record_phase(db, attempt, row.phase)
+    db.commit()
+    if entry is None:
+        db.refresh(row)
+        raise HTTPException(
+            status_code=409,
+            detail=f"Still refused: {row.error} The payload has not been "
+                   "repaired, so nothing was queued.")
+    return {"failure_id": failure_id, "queued_phase": row.phase,
+            "attempt_id": row.attempt_id, "resolved": True}
 
 
 @app.post("/sync/queue/{entry_id}/retry")

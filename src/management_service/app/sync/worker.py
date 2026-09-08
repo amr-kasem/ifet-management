@@ -84,9 +84,23 @@ def run_cycle(session, send, *, limit=10, now=None,
         if outbox.is_superseded(session, entry):
             # Not an error: a duplicate of something Airtable already has, or
             # older than what it holds. Closing it is the correct outcome.
+            # `is_superseded` never says yes for an attachment — a photograph is
+            # a different artifact, not a stale version of the record.
             outbox.mark_done(session, entry, now=now)
             result.superseded += 1
             continue
+
+        # An attachment's "already done" question is per artifact, not per
+        # record sequence. Asked here so a redelivery of a photograph Airtable
+        # already holds is closed rather than attached a second time — the
+        # other half of contract §6's "one sender owns an artifact at a time".
+        if entry.phase == outbox.ATTACHMENT:
+            photo_id = (entry.payload or {}).get("photo", {}).get("id")
+            if photo_id is not None and outbox.artifact_is_delivered(
+                    session, photo_id):
+                outbox.mark_done(session, entry, now=now)
+                result.superseded += 1
+                continue
 
         # Re-assert immediately before *this* send, not once for the batch: by
         # the time a slow batch reaches its last entry, a batch-stamped lease
@@ -128,6 +142,20 @@ def run_cycle(session, send, *, limit=10, now=None,
                 result.discarded += 1
                 continue
             outbox.mark_done(session, entry, airtable_record_id=record_id, now=now)
+            if entry.phase == outbox.ATTACHMENT:
+                # Record *this photograph* as landed, with whatever id the
+                # sender returned. Without this the next retry would send it
+                # again: the outbox entry going `done` says the entry is
+                # finished, not that the file is on the record.
+                photo = (entry.payload or {}).get("photo", {})
+                if photo.get("id") is not None:
+                    outbox.mark_artifact_delivered(
+                        session, photo["id"], entry.attempt_id,
+                        airtable_record_id=(record_id if isinstance(record_id, str)
+                                            else None),
+                        attachment_id=(record_id if isinstance(record_id, str)
+                                       else None),
+                        now=now)
             result.delivered += 1
             st = sync_state.get_or_create(session)
             st.last_push_ok_at = now

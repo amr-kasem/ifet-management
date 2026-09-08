@@ -45,6 +45,27 @@ def owning_test(attempt):
     return None
 
 
+def _cycles_completed(attempt):
+    """How many cycles the rig actually ran — required on a Cycles terminal write.
+
+    `attempt.cycles_completed` is a column nothing populates: the rig reports its
+    progress on the *test* (`cyclic_tests.current_cycle`), not on the attempt.
+    So contract §5.1 required a field that could never be present, and every
+    Cycles terminal payload was refused. Read from the owning test instead, with
+    the explicit column still winning if something sets it.
+
+    Returns None for any other test type, and None rather than 0 when the rig
+    has reported nothing — §6 forbids substituting zero for unknown data, and a
+    cyclic test that ran no cycles is a different claim from one we cannot
+    account for.
+    """
+    if attempt.test_type != C.CYCLES:
+        return None
+    test = owning_test(attempt)
+    done = getattr(test, "current_cycle", None)
+    return done if done else None
+
+
 def _impact_result(attempt):
     """The one-line Impact summary contract §5.1 requires on a terminal write.
 
@@ -348,7 +369,9 @@ def envelope_values(attempt, *, strict=True):
         "Impact Result": attempt.impact_result or _impact_result(attempt),
         "Required Value": attempt.required_value,
         "Required Unit": attempt.required_unit,
-        "Cycles Completed": attempt.cycles_completed,
+        "Cycles Completed": (attempt.cycles_completed
+                             if attempt.cycles_completed is not None
+                             else _cycles_completed(attempt)),
         "Result Detail (JSON)": attempt.result_detail or result_detail(attempt),
 
         # -- §4.5 timing, people, disposition ---------------------------------

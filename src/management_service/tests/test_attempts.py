@@ -54,7 +54,10 @@ class TestIdentity(unittest.TestCase):
         b = attempts.begin([], test_type="Static Load")
         self.assertEqual(b["status"], attempts.IN_PROGRESS)
         self.assertIsNotNone(b["testing_start_date"].tzinfo)
-        self.assertIs(b["retest_required"], False)
+        # **Absent, not False.** §6: never inferred false from an unreviewed
+        # checkbox. This asserted False until 2026-09-08, which is why the two
+        # creation paths disagreed and every rig terminal write was refused.
+        self.assertNotIn("retest_required", b)
 
 
 class Lifecycle(unittest.TestCase):

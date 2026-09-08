@@ -116,7 +116,10 @@ def record_phase(session, attempt, phase):
         if _unlinked(attempt):
             attempt.airtable_sync_state = EXCLUDED
             return None
-        return _refuse(attempt, phase, exc)
+        # A linked job with an incomplete binding: nobody has finished attaching
+        # the protocol or section. A retry cannot fix that on its own, so it is
+        # recorded as **not** recoverable — someone must bind it first.
+        return _refuse(session, attempt, phase, exc, recoverable=False)
 
     kwargs = {}
     if phase in (TERMINAL, VERDICT):
@@ -126,10 +129,19 @@ def record_phase(session, attempt, phase):
     try:
         payload = _BUILDERS[phase](values, **kwargs)
     except EnvelopeError as exc:
-        return _refuse(attempt, phase, exc)
+        # A payload our own envelope rejected: a defect on our side, and
+        # recoverable once the defect is fixed and the phase re-queued.
+        return _refuse(session, attempt, phase, exc, values=values)
 
-    return outbox.enqueue(session, attempt.labos_attempt_id, phase, payload,
-                          payload_updated_at=attempt.labos_updated_at)
+    entry = outbox.enqueue(session, attempt.labos_attempt_id, phase, payload,
+                           payload_updated_at=attempt.labos_updated_at)
+    # Queued successfully, so any recorded failure for this phase is repaired.
+    # Resolved here rather than by the repair route, so a phase that starts
+    # working on its own does not leave a stale open failure in the status.
+    for row in outbox.open_publication_failures(session):
+        if row.attempt_id == attempt.labos_attempt_id and row.phase == phase:
+            outbox.resolve_publication_failure(session, row)
+    return entry
 
 
 def record_attachment(session, attempt, photo):
@@ -185,10 +197,45 @@ def _unlinked(attempt):
     return project is None or not project.airtable_project_id
 
 
-def _refuse(attempt, phase, exc):
-    """Record a payload we would not send, and make it visible. Never raises."""
+def _refuse(session, attempt, phase, exc, values=None, recoverable=True):
+    """Record a payload we would not send, durably. Never raises.
+
+    Three places now, and each is load-bearing:
+
+    * on the **attempt**, so a screen showing one result shows its sync state;
+    * in **`sync_publication_failure`**, so it survives, appears in
+      `GET /sync/status`, and has somewhere to be repaired from. Until
+      2026-09-08 only the attempt column was written and nothing read it — the
+      headline said `Synced` for an attempt that had never been published,
+      because status computes from the queue and there was no queue entry;
+    * in the **log**, for whoever is watching the container.
+
+    `values` is the envelope input that was refused, snapshotted. Repair must not
+    re-derive it: by then the attempt may have been reviewed, and rebuilding
+    would repair a different phase from the one that failed.
+    """
     attempt.airtable_sync_state = "Sync Failed"
     attempt.airtable_sync_error = f"{phase}: {exc}"
+    outbox.record_publication_failure(
+        session, attempt.labos_attempt_id, phase, exc,
+        payload_snapshot=_snapshot(values),
+        payload_updated_at=attempt.labos_updated_at,
+        recoverable=recoverable)
     log.error("refused to queue %s for attempt %s: %s",
               phase, attempt.labos_attempt_id, exc)
     return None
+
+
+def _snapshot(values):
+    """The refused values, JSON-safe. Datetimes become ISO strings."""
+    if not values:
+        return None
+    out = {}
+    for k, v in values.items():
+        if hasattr(v, "isoformat"):
+            out[k] = v.isoformat()
+        elif isinstance(v, (str, int, float, bool, type(None), list, dict)):
+            out[k] = v
+        else:
+            out[k] = repr(v)
+    return out

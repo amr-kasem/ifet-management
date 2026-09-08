@@ -101,8 +101,16 @@ def status(session, now=None, heartbeat_timeout=DEFAULT_HEARTBEAT_TIMEOUT):
     pull_err = state.last_pull_error if state else None
 
     attachments = outbox.attachment_backlog(session)
+    # Artifacts whose upload returned ambiguously. Contract §6 says reconcile
+    # rather than blindly re-append, so these are a distinct condition from a
+    # queue that is merely draining.
+    reconcile = outbox.artifacts_needing_reconciliation(session)
+    # Payloads we refused to queue. **Counted into the headline**, because until
+    # 2026-09-08 they were invisible: status computed from the queue and the
+    # worker, so an attempt that had never been published read `Synced`.
+    failed_publications = outbox.failed_publication_count(session)
 
-    if not worker_alive or parked or push_err or pull_err:
+    if not worker_alive or parked or failed_publications or push_err or pull_err:
         led = LED_RED
     elif depth:
         led = LED_AMBER
@@ -112,7 +120,10 @@ def status(session, now=None, heartbeat_timeout=DEFAULT_HEARTBEAT_TIMEOUT):
     # Ordered by what the operator must do about it, most actionable first.
     # `parked` outranks a transient error because it will never clear on its
     # own, and both outrank a queue that is merely draining.
-    if parked:
+    if parked or failed_publications:
+        # Both need a human. A parked entry stopped an attempt's queue; a failed
+        # publication never made one, which is the more dangerous of the two
+        # precisely because nothing is visibly stuck.
         sync_status = SYNC_RETRY_REQUIRED
     elif not worker_alive or push_err or pull_err:
         sync_status = SYNC_FAILED
@@ -127,6 +138,8 @@ def status(session, now=None, heartbeat_timeout=DEFAULT_HEARTBEAT_TIMEOUT):
         "attachment_backlog": attachments,
         # Broken out so "evidence is stuck" is legible without reading the queue.
         "attachment_parked": parked_attachments,
+        "artifacts_needing_reconciliation": reconcile,
+        "failed_publications": failed_publications,
         "worker_alive": worker_alive,
         "heartbeat_age_seconds": beat_age,
         "queue_depth": depth,
