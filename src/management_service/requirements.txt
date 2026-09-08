@@ -7,3 +7,8 @@ alembic
 PyPDF2
 reportlab
 Pillow
+# Required by every Form/File route — `add_attempt_photo`, `add_shot_photo` and
+# the report upload. FastAPI raises at request time without it, not at import.
+# Production has it only because the base image happens to ship it; a build from
+# this file alone had every upload route failing. Declared 2026-09-08.
+python-multipart

@@ -24,14 +24,25 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import sessionmaker
 
 from app.data.models import Base
-from app.sync.outbox import SyncAttemptState, SyncOutbox
+from app.sync.outbox import (SyncArtifactDelivery, SyncAttemptState, SyncOutbox,
+                             SyncPublicationFailure)
 from app.sync.state import SyncState
 
 SQLITE_URL = "sqlite://"
 
-# Only these three. Creating the whole legacy schema would make every setUp pay
-# for tables no outbox test touches.
-SYNC_TABLES = [SyncOutbox.__table__, SyncAttemptState.__table__, SyncState.__table__]
+# Only the tables the outbox suites touch. Creating the whole legacy schema would
+# make every setUp pay for tables they do not.
+#
+# `sync_artifact_delivery` and `sync_publication_failure` were missing until
+# 2026-09-08 and six `status()` tests failed on every backend as a result:
+# `sync_state.status()` counts the attachments awaiting reconciliation and the
+# publication failures, so the LED and status assertions reach tables this list
+# did not create. Naming every table in `app.sync` rather than the three the
+# outbox writes, because the list has to follow what the code *reads* — and the
+# next query added to `status()` should not cost another afternoon.
+SYNC_TABLES = [SyncOutbox.__table__, SyncAttemptState.__table__,
+               SyncState.__table__, SyncArtifactDelivery.__table__,
+               SyncPublicationFailure.__table__]
 
 
 def database_url():
