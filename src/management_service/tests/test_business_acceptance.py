@@ -750,34 +750,25 @@ class TheProductionSender(_Base):
     """
 
     def _sender(self, calls):
-        """`service.send`, wired to a stub client, without running the process."""
-        from app.airtable.errors import AirtableValidationError
-        from app.sync import outbox
+        """**The production sender itself**, wired to a stub client.
+
+        `service.make_sender(client, settings)` — the same function `main()`
+        calls. This test used to hold a copy of that closure and assert, by
+        scanning the source, that the copy still matched; a test of a
+        resemblance rather than of the code. That shape is what let the
+        phase-blind sender through in the first place, so the copy is gone.
+        """
+        from app.sync import service
 
         class StubClient:
             def upsert_records(self, table_id, records, **kw):
                 calls.append((table_id, records))
                 return {"records": [{"id": "recSTUB0000000001"}]}
 
-        client = StubClient()
+        class StubSettings:
+            results_table = "tblSTUB"
 
-        def send(entry):
-            if entry.phase == outbox.ATTACHMENT:
-                raise AirtableValidationError("attachment delivery is not implemented yet")
-            response = client.upsert_records("tblSTUB", [entry.payload])
-            records = response.get("records") or []
-            return records[0].get("id") if records else None
-
-        return send
-
-    def test_the_sender_in_service_matches_the_one_asserted_here(self):
-        """Guard against this test drifting from the code it stands in for."""
-        import inspect
-        from app.sync import service
-        source = inspect.getsource(service)
-        self.assertIn("if entry.phase == outbox.ATTACHMENT:", source,
-                      "service.send must still refuse attachment entries")
-        self.assertIn("attachment delivery is not implemented yet", source)
+        return service.make_sender(StubClient(), StubSettings())
 
     def test_an_attachment_parks_with_a_truthful_reason_and_no_request(self):
         from app.sync import outbox, worker

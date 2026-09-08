@@ -104,6 +104,54 @@ def run(session_factory, send, *, slot_engine, idle_interval=DEFAULT_IDLE_INTERV
     return cycles
 
 
+def make_sender(client, settings):
+    """The production sender, as a value rather than a closure.
+
+    **Extracted so it can be tested rather than imitated.** It lived inside
+    `main()`, so the only way to check its behaviour was to write a copy in the
+    test and assert — by scanning the source — that the copy still matched. That
+    is a test of a resemblance, not of the code, and it is exactly the shape of
+    thing that let a real defect through: the sender ignored `entry.phase` and
+    would have PATCHed every attachment payload as record fields.
+
+    Now `main()` and the live pipeline probe call the same function.
+    """
+
+    def send(entry):
+        """One outbox entry -> one upsert on the single writable table.
+
+        The payload is already the envelope: `enqueue` stored what the mapping
+        produced, so the worker never re-derives it. Re-deriving at send time
+        would mean the row that goes out is whatever the database says *now*,
+        not what was agreed when the phase was recorded.
+
+        **Attachment entries are refused here, deliberately.** This function
+        used to send every phase through `upsert_records` without looking at
+        `entry.phase`, and an attachment payload is not a record payload — it
+        carries a `photo` object, not Airtable fields. Live, Airtable would have
+        rejected every photograph as an unknown field: a 422, which is terminal,
+        so **every attachment would have parked on first contact** and
+        `/sync/status` would have sat at Retry Required forever.
+
+        The upload path (preview generation, contract §6's direct upload,
+        recording the returned attachment ids) is not built yet.
+        """
+        if entry.phase == outbox.ATTACHMENT:
+            raise AirtableValidationError(
+                "attachment delivery is not implemented yet: LabOS has no "
+                "preview-generation or upload path, so this photograph cannot "
+                "be sent. Parked deliberately rather than PATCHed as record "
+                "fields, which Airtable would reject as an unknown field. The "
+                "evidence is safe in LabOS and this entry carries what to send "
+                "once the uploader exists."
+            )
+        response = client.upsert_records(settings.results_table, [entry.payload])
+        records = response.get("records") or []
+        return records[0].get("id") if records else None
+
+    return send
+
+
 def main(argv=None):                                        # pragma: no cover
     """Entry point. Wires the real database and the real Airtable client."""
     logging.basicConfig(
@@ -151,39 +199,7 @@ def main(argv=None):                                        # pragma: no cover
     session_factory = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     client = AirtableClient(settings=airtable_settings)
 
-    def send(entry):
-        """One outbox entry -> one upsert on the single writable table.
-
-        The payload is already the envelope: `enqueue` stored what the mapping
-        produced, so the worker never re-derives it. Re-deriving at send time
-        would mean the row that goes out is whatever the database says *now*,
-        not what was agreed when the phase was recorded.
-
-        **Attachment entries are refused here, deliberately.** This function
-        used to send every phase through `upsert_records` without looking at
-        `entry.phase`, and an attachment payload is not a record payload — it
-        carries a `photo` object, not Airtable fields. Live, Airtable would have
-        rejected every photograph as an unknown field: a 422, which is terminal,
-        so **every attachment would have parked on first contact** and
-        `/sync/status` would have sat at Retry Required forever. No test could
-        see it, because the suites inject a sender that accepts any payload.
-        The upload path (preview generation, contract §6's direct upload,
-        recording the returned attachment ids) is not built yet.
-        """
-        if entry.phase == outbox.ATTACHMENT:
-            raise AirtableValidationError(
-                "attachment delivery is not implemented yet: LabOS has no "
-                "preview-generation or upload path, so this photograph cannot "
-                "be sent. Parked deliberately rather than PATCHed as record "
-                "fields, which Airtable would reject as an unknown field. The "
-                "evidence is safe in LabOS and this entry carries what to send "
-                "once the uploader exists."
-            )
-        response = client.upsert_records(
-            airtable_settings.results_table, [entry.payload]
-        )
-        records = response.get("records") or []
-        return records[0].get("id") if records else None
+    send = make_sender(client, airtable_settings)
 
     stopping = Stopping().install()
     try:
