@@ -87,7 +87,10 @@ def status(session, now=None, heartbeat_timeout=DEFAULT_HEARTBEAT_TIMEOUT):
     now = now or _now()
     state = session.get(SyncState, 1)
     depth = outbox.queue_depth(session)
-    parked = outbox.parked_count(session)
+    # Record-channel parks only: see `outbox.parked_count`. An unimplemented
+    # capability must not pin the headline status and hide the next real failure.
+    parked = outbox.parked_count(session, include_attachments=False)
+    parked_attachments = outbox.parked_count(session) - parked
     blocked = outbox.blocked_attempts(session)
 
     beat = _aware(state.worker_heartbeat_at) if state else None
@@ -122,6 +125,8 @@ def status(session, now=None, heartbeat_timeout=DEFAULT_HEARTBEAT_TIMEOUT):
         "led": led,
         "status": sync_status,
         "attachment_backlog": attachments,
+        # Broken out so "evidence is stuck" is legible without reading the queue.
+        "attachment_parked": parked_attachments,
         "worker_alive": worker_alive,
         "heartbeat_age_seconds": beat_age,
         "queue_depth": depth,

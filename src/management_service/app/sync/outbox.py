@@ -472,9 +472,26 @@ def attachment_backlog(session):
                     SyncOutbox.state.in_(OPEN_STATES)).scalar()) or 0
 
 
-def parked_count(session):
-    return (session.query(func.count(SyncOutbox.id))
-            .filter(SyncOutbox.state == PARKED).scalar()) or 0
+def parked_count(session, include_attachments=True):
+    """Parked entries. `include_attachments=False` counts the record channel only.
+
+    The split exists because the two mean different things to an operator.
+    A parked **record** phase is a result that has not reached Airtable and needs
+    a human. A parked **attachment** is evidence that has not reached Airtable —
+    §6 says that "remains visible in sync status" and equally that attachments
+    settle on their own channel without changing a measured result.
+
+    It matters right now because attachment delivery is not implemented, so
+    every photograph parks. Counting those into the headline status would pin it
+    at `Retry Required` permanently and hide the next real push failure behind
+    known noise. They stay counted in `attachment_backlog`, which is where §6
+    puts them.
+    """
+    q = session.query(func.count(SyncOutbox.id)).filter(
+        SyncOutbox.state == PARKED)
+    if not include_attachments:
+        q = q.filter(SyncOutbox.phase != ATTACHMENT)
+    return q.scalar() or 0
 
 
 def blocked_attempts(session):

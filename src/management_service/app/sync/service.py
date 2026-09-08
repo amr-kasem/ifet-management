@@ -28,6 +28,8 @@ import signal
 import sys
 import time
 
+from ..airtable.errors import AirtableValidationError
+from . import outbox
 from . import singleton
 from . import worker as sync_worker
 
@@ -156,7 +158,27 @@ def main(argv=None):                                        # pragma: no cover
         produced, so the worker never re-derives it. Re-deriving at send time
         would mean the row that goes out is whatever the database says *now*,
         not what was agreed when the phase was recorded.
+
+        **Attachment entries are refused here, deliberately.** This function
+        used to send every phase through `upsert_records` without looking at
+        `entry.phase`, and an attachment payload is not a record payload — it
+        carries a `photo` object, not Airtable fields. Live, Airtable would have
+        rejected every photograph as an unknown field: a 422, which is terminal,
+        so **every attachment would have parked on first contact** and
+        `/sync/status` would have sat at Retry Required forever. No test could
+        see it, because the suites inject a sender that accepts any payload.
+        The upload path (preview generation, contract §6's direct upload,
+        recording the returned attachment ids) is not built yet.
         """
+        if entry.phase == outbox.ATTACHMENT:
+            raise AirtableValidationError(
+                "attachment delivery is not implemented yet: LabOS has no "
+                "preview-generation or upload path, so this photograph cannot "
+                "be sent. Parked deliberately rather than PATCHed as record "
+                "fields, which Airtable would reject as an unknown field. The "
+                "evidence is safe in LabOS and this entry carries what to send "
+                "once the uploader exists."
+            )
         response = client.upsert_records(
             airtable_settings.results_table, [entry.payload]
         )

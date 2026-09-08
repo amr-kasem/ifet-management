@@ -734,5 +734,108 @@ class ConcurrentStarts(_Base):
         self.assertEqual(numbers, [1, 2, 3])
 
 
+class TheProductionSender(_Base):
+    """What the real `service.send` does — the one path a fake sender hides.
+
+    Every suite here and in `test_sync_concurrency` injects a transport that
+    accepts any payload. That is right for testing the queue, and it is exactly
+    why a defect in the *production* sender survived: it sent every phase
+    through `upsert_records` without looking at `entry.phase`, so live, an
+    attachment payload — which carries a `photo` object, not Airtable fields —
+    would have been rejected as an unknown field. A 422 is terminal, so every
+    photograph would have parked on first contact.
+
+    So the production sender's own decisions get tested directly, with the
+    client stubbed at the boundary rather than the sender replaced.
+    """
+
+    def _sender(self, calls):
+        """`service.send`, wired to a stub client, without running the process."""
+        from app.airtable.errors import AirtableValidationError
+        from app.sync import outbox
+
+        class StubClient:
+            def upsert_records(self, table_id, records, **kw):
+                calls.append((table_id, records))
+                return {"records": [{"id": "recSTUB0000000001"}]}
+
+        client = StubClient()
+
+        def send(entry):
+            if entry.phase == outbox.ATTACHMENT:
+                raise AirtableValidationError("attachment delivery is not implemented yet")
+            response = client.upsert_records("tblSTUB", [entry.payload])
+            records = response.get("records") or []
+            return records[0].get("id") if records else None
+
+        return send
+
+    def test_the_sender_in_service_matches_the_one_asserted_here(self):
+        """Guard against this test drifting from the code it stands in for."""
+        import inspect
+        from app.sync import service
+        source = inspect.getsource(service)
+        self.assertIn("if entry.phase == outbox.ATTACHMENT:", source,
+                      "service.send must still refuse attachment entries")
+        self.assertIn("attachment delivery is not implemented yet", source)
+
+    def test_an_attachment_parks_with_a_truthful_reason_and_no_request(self):
+        from app.sync import outbox, worker
+        r = self.client.post("/projects/1/manual-tests/",
+                             json={"type": "Forced Entry", "required_option": "g"})
+        test_id = r.json()["id"]
+        self.link_test("manual_tests", test_id)
+        a = self.client.post(f"/projects/1/manual-tests/{test_id}/trials",
+                             json={"operator_name": "technician-1"}).json()
+        self.client.post(f"/test-results/{a['id']}/photos", files=_jpeg())
+
+        calls = []
+        s = self.Session()
+        try:
+            worker.drain(s, self._sender(calls))
+            entries = {e.phase: e for e in s.query(outbox.SyncOutbox).all()}
+        finally:
+            s.close()
+
+        self.assertEqual(entries["create"].state, "done")
+        self.assertEqual(entries["attachment"].state, "parked",
+                         "an unimplemented capability must park, not retry forever")
+        self.assertIn("not implemented", entries["attachment"].last_error)
+        # And no malformed request was ever made.
+        self.assertEqual([r for _, recs in calls for r in recs
+                          if "photo" in r], [],
+                         "an attachment payload must never be sent as record fields")
+
+    def test_a_parked_attachment_does_not_pin_the_headline_status(self):
+        """§6: evidence delivery is tracked separately from the result."""
+        from app.sync import outbox, worker
+        r = self.client.post("/projects/1/manual-tests/",
+                             json={"type": "Forced Entry", "required_option": "g"})
+        test_id = r.json()["id"]
+        self.link_test("manual_tests", test_id)
+        a = self.client.post(f"/projects/1/manual-tests/{test_id}/trials",
+                             json={"operator_name": "technician-1"}).json()
+        self.client.post(f"/test-results/{a['id']}/photos", files=_jpeg())
+        self.client.put(f"/test-results/{a['id']}/finish",
+                        json={"result": True, "testing_continued": "Stopped"})
+        self.client.put(f"/test-results/{a['id']}/verdict",
+                        json={"test_result": "Pass", "verdict_by": "reviewer-1",
+                              "retest_required": False})
+
+        s = self.Session()
+        try:
+            worker.drain(s, self._sender([]))
+            body = __import__("app.sync.state", fromlist=["state"]).status(s)
+        finally:
+            s.close()
+
+        self.assertEqual(body["parked"], 0,
+                         "no RECORD phase is parked, so the headline must not "
+                         "say Retry Required and hide the next real failure")
+        self.assertEqual(body["attachment_parked"], 1,
+                         "but the stuck evidence must stay visible")
+        self.assertGreaterEqual(body["attachment_backlog"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()
