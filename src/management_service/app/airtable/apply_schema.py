@@ -183,6 +183,33 @@ FIELDS = [
             "achieved value (decision A2)."),
     }),
 
+    # --- Impact Number: the axis that keeps their roll-ups honest -----------
+    #
+    # Added 2026-09-08, after the product owner respecified Impact as **one
+    # attempt per impact** and confirmed the consequence: a five-impact test
+    # publishes five rows where it used to publish one.
+    #
+    # Without this field that change would ship the exact failure the change
+    # document's §0.3 uses to justify `Corrects Attempt ID` — a roll-up counting
+    # attempt rows would read five tests, and read plausibly. `Attempt Number`
+    # already carries the ordinal, so this is not for LabOS's benefit: it is so a
+    # consumer can count *tests* by `LabOS Test ID` and *impacts* by this,
+    # without knowing a rule about which test type it is looking at. Structural
+    # rather than conventional, for the same reason `Corrects Attempt ID` is.
+    #
+    # Blank on the other four test types. Delivery plan §4.5a.
+    (RAW_RESULTS, {
+        "name": "Impact Number",
+        "type": "number",
+        "options": {"precision": 0},
+        "description": (
+            "Which impact of the test this row records — 1, 2, 3. Populated only for "
+            "Test Type = Impact, where one attempt is one impact, and blank on every "
+            "other type. Count tests by grouping on LabOS Test ID; count impacts with "
+            "this. A roll-up that counts attempt rows instead will read a five-impact "
+            "test as five tests."),
+    }),
+
     # --- LabOS Raw Data Table: corrections, review identity, execution times, evidence
     (RAW_RESULTS, {
         "name": "Corrects Attempt ID",

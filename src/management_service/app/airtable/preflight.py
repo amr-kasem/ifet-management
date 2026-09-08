@@ -8,7 +8,7 @@ bases we do not control between one day and the next.
 
 It checks four claims, and each one has a way of being quietly wrong:
 
-1. **The 17 fields exist in Testing, with the right types.** A field created by
+1. **The 18 fields exist in Testing, with the right types.** A field created by
    hand instead of by the tool could be `singleLineText` where the document says
    `number`, and nothing else would notice.
 2. **Production still has none of them, and is still 142 fields.** If someone
@@ -43,7 +43,7 @@ PRODUCTION = "app0OCunbmuXl7Hc9"
 PROTOCOL_SECTIONS = "tblqpvuJlSdkeS9PS"
 RAW = "tblnc9SsbXU0C0FWh"
 
-# The 17, as the document lists them.
+# The 18, as the document lists them.
 ADDED = {
     PROTOCOL_SECTIONS: [
         ("Requirement Code", "singleSelect"), ("Requirement Kind", "singleSelect"),
@@ -57,6 +57,10 @@ ADDED = {
         ("Corrects Attempt ID", "singleLineText"), ("LabOS Verdict By", "singleLineText"),
         ("LabOS Verdict At", "dateTime"), ("Testing Start Date", "dateTime"),
         ("Testing End Date", "dateTime"), ("LabOS Photos", "multipleAttachments"),
+        # 18 since 2026-09-08. `Impact Number` is the axis that lets their
+        # roll-ups count tests and impacts separately once one attempt is one
+        # impact — without it a five-impact test reads as five tests.
+        ("Impact Number", "number"),
     ],
 }
 
@@ -114,14 +118,25 @@ def main(argv=None):
         fails.append(f"production already has {leaked} — 'production is untouched' is false")
         print(f"   PRESENT IN PRODUCTION: {leaked}")
     else:
-        print("   none of the 17 are in production")
+        # Counted, not written out. This said "17" until 2026-09-08 and stayed
+        # saying it after the eighteenth field was added — a status line that
+        # cannot go stale is worth the one expression.
+        print(f"   none of the {sum(len(f) for f in ADDED.values())} "
+              "are in production")
     p_count = sum(len(f) for f in prod_s.values())
     t_count = sum(len(f) for f in test_s.values())
     print(f"   production {p_count} fields · testing {t_count} fields · delta {t_count - p_count}")
     if p_count != 142:
         fails.append(f"production is {p_count} fields, document says 142")
-    if t_count - p_count != 17:
-        fails.append(f"delta is {t_count - p_count}, document says 17")
+    # The delta the document claims **is** the number of fields this script
+    # asserts, so it is derived from `ADDED` rather than restated. Written as a
+    # literal 17, it was the check that caught the eighteenth field — and then
+    # it would have had to be edited by hand every time, which is how a gate
+    # ends up asserting last month's truth.
+    expected = sum(len(f) for f in ADDED.values())
+    if t_count - p_count != expected:
+        fails.append(f"delta is {t_count - p_count}, this script asserts "
+                     f"{expected} field(s)")
 
     # -- 3. the spec CSV matches the live bases ----------------------------
     print("\n3. production-change-spec.csv against both bases")
