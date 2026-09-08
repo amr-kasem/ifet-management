@@ -329,6 +329,26 @@ class TestResult(Base):
 
     __tablename__ = "test_results"
 
+    # Attempt Number is unique WITHIN a test, and the database enforces it.
+    #
+    # Allocation was `count()+1` / `len(trials)+1` — correct in sequence and
+    # unprotected against two starts at once, which is the one concurrency case
+    # plan §4.3 says actually exists here: a human and a rig acting on the same
+    # attempt, or an operator double-pressing Start. Two attempts numbered 2
+    # then both publish `Attempt Number = 2` under different `LabOS Attempt ID`s,
+    # and Airtable would show two records that look like one duplicated.
+    #
+    # `labos_test_id` is the right left-hand column because it is *already* the
+    # identity of "this test" and lives on this table — the alternative, the
+    # per-subclass foreign key, is on the child tables and cannot be constrained
+    # against a column here. `shots` has had exactly this constraint on
+    # (test_result_id, shot_number) since the manual-test migration; this is the
+    # same rule one level up.
+    __table_args__ = (
+        UniqueConstraint("labos_test_id", "trial_number",
+                         name="uq_test_results_test_attempt"),
+    )
+
     id = Column(Integer, primary_key=True, index=True)
     trial_number = Column(Integer, nullable=False)      # = contract `Attempt Number`
     result = Column(Boolean, nullable=True)             # legacy pass/fail; see test_result

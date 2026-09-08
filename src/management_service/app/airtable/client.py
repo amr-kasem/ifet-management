@@ -27,6 +27,12 @@ import urllib.parse
 import urllib.request
 
 from ..config import airtable_settings
+from ..retry_budget import (  # one decision with the outbox lease
+    DEFAULT_TIMEOUT,
+    MAX_REQUEST_ATTEMPTS,
+    MIN_REQUEST_INTERVAL,
+    request_budget_seconds,
+)
 from .errors import (
     AirtableError,
     AirtableTransportError,
@@ -38,34 +44,15 @@ API_ROOT = "https://api.airtable.com/v0"
 
 # Airtable allows 5 requests/second per base. 0.2s spacing keeps us at the limit
 # without a token bucket; the sync worker is serialized anyway (§8).
-MIN_REQUEST_INTERVAL = 0.2
 
 # Airtable's hard limit on records per create/update request (§2).
 MAX_BATCH = 10
 
-DEFAULT_TIMEOUT = 30
 
 # Retries per request. Named, because the outbox lease is derived from it: the
 # two must never drift apart. See `request_budget_seconds`.
-MAX_REQUEST_ATTEMPTS = 5
 
 
-def request_budget_seconds(max_attempts=None, timeout=DEFAULT_TIMEOUT):
-    """Worst-case wall clock for one `request()` call, in seconds.
-
-    The outbox lease is computed from this, so that "how long may a worker hold
-    an entry" and "how long may one send legitimately take" are a single
-    decision rather than two numbers that quietly disagree. With the defaults
-    this is ~168 s, which is why a 120 s lease was wrong.
-
-    Counts every attempt's socket timeout, every inter-attempt backoff at its
-    ceiling including maximum jitter, and the inter-request throttle.
-    """
-    max_attempts = MAX_REQUEST_ATTEMPTS if max_attempts is None else max_attempts
-    sockets = timeout * max_attempts
-    backoff = sum(min(2 ** (a - 1), 30) + 0.5 for a in range(1, max_attempts))
-    throttle = MIN_REQUEST_INTERVAL * max_attempts
-    return sockets + backoff + throttle
 
 
 class AirtableClient:

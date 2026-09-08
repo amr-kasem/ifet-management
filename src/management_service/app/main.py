@@ -391,23 +391,33 @@ def create_static_test_trial(project_id: int, static_test_index: int, trial_data
         raise HTTPException(status_code=404, detail="Static test not found")
     
     
-    new_trial = StaticTestResult(
-        static_test_id=static_test.id,
-        trial_number=len(static_test.trials)+1,
-        result=None,
-        note=None,
-        # P1 / Ref 46 — an attempt is born with its Airtable identity and in the
-        # In Progress state, not stamped later. The merge key has to exist
-        # before anything can reference the attempt, and `labos_test_id` is
-        # taken from the sibling attempts so a retest joins its own group.
-        **attempts.begin(
-            static_test.trials,
-            test_type="Static Load",
-            test_name=static_test.airtable_section_name,
-        ),
-    )   
-    
-    db.add(new_trial)
+    _test_id = attempts.test_id_for_test(attempts.STATIC, static_test.id)
+
+    def _build_trial():
+        return StaticTestResult(
+            static_test_id=static_test.id,
+            # Numbered under UniqueConstraint(labos_test_id, trial_number), and
+            # re-read on each try: `len(trials)+1` was unprotected against a
+            # concurrent start, and the rig posting a trial while the UI posts
+            # one is the case plan §4.3 says actually happens here.
+            trial_number=attempts.next_attempt_number(db, _test_id),
+            result=None,
+            note=None,
+            # P1 / Ref 46 — an attempt is born with its Airtable identity and
+            # in the In Progress state, not stamped later. The merge key has to
+            # exist before anything can reference the attempt, and
+            # `labos_test_id` is DERIVED from (kind, test id) so a retest joins
+            # its own group without depending on a sibling being present — see
+            # `attempts.test_id_for_test`.
+            **attempts.begin(
+                static_test.trials,
+                test_type="Static Load",
+                test_name=static_test.airtable_section_name,
+                kind=attempts.STATIC, parent_id=static_test.id,
+            ),
+        )
+
+    new_trial = attempts.insert_attempt(db, _build_trial)
     db.flush()  # Flush to get the new ID without committing
     
     for d in trial_data.deflections:
@@ -572,21 +582,29 @@ def create_cyclic_test_trial(project_id: int, cyclic_test_index: int, trial_data
     db.commit()
     db.refresh(cyclic_test)
     
-    new_trial = CyclicTestResult(
-        cyclic_test_id=cyclic_test.id,
-        trial_number=len(cyclic_test.trials)+1,
-        result=None,
-        note=None,
-        # See the static-load endpoint above. "Cycles" is the contract §4.3
-        # option name for this test type; the LabOS word is "cyclic".
-        **attempts.begin(
-            cyclic_test.trials,
-            test_type="Cycles",
-            test_name=cyclic_test.airtable_section_name,
-        ),
-    )
+    _test_id = attempts.test_id_for_test(attempts.CYCLIC, cyclic_test.id)
 
-    db.add(new_trial)
+    def _build_trial():
+        return CyclicTestResult(
+            cyclic_test_id=cyclic_test.id,
+            # Numbered under UniqueConstraint(labos_test_id, trial_number), and
+            # re-read on each try: `len(trials)+1` was unprotected against a
+            # concurrent start, and the rig posting a trial while the UI posts
+            # one is the case plan §4.3 says actually happens here.
+            trial_number=attempts.next_attempt_number(db, _test_id),
+            result=None,
+            note=None,
+            # See the static-load endpoint above. "Cycles" is the contract §4.3
+            # option name for this test type; the LabOS word is "cyclic".
+            **attempts.begin(
+                cyclic_test.trials,
+                test_type="Cycles",
+                test_name=cyclic_test.airtable_section_name,
+                kind=attempts.CYCLIC, parent_id=cyclic_test.id,
+            ),
+        )
+
+    new_trial = attempts.insert_attempt(db, _build_trial)
     db.flush()
     
     for d in trial_data.deflections:
@@ -1259,41 +1277,46 @@ def _require_test(db, model, project_id, test_id, what):
 def _start_attempt(db, cls, test, test_type, operator_name, **link):
     """Begin an attempt. `trial_number` already means Attempt Number (§4.1).
 
-    Allocated server-side: a client that chose its own could number two attempts
-    the same, and every attempt is retained rather than overwritten.
+    Allocated server-side — a client that chose its own could number two
+    attempts the same — and now allocated **under a uniqueness constraint**, so
+    two simultaneous starts produce attempts 2 and 3 rather than two attempt 2s.
+    Every attempt is retained rather than overwritten.
     """
     if test.finished:
         raise HTTPException(
             status_code=400,
             detail="This test is finished. Reopen it or create a new one to test again.")
-    n = db.query(cls).filter(getattr(cls, list(link)[0]) == test.id).count()
-    attempt = cls(
-        trial_number=n + 1,
-        test_type=test_type,
-        test_name=test.airtable_section_name,
-        status=_IN_PROGRESS,
-        test_result=_PENDING,
-        operator_name=operator_name,
-        testing_start_date=_utcnow(),
-        labos_test_id=_labos_test_id(test, test_type),
-        schema_version=None,
-        **link,
-    )
-    db.add(attempt)
+    test_id = attempts.test_id_for_test(_kind_of(test), test.id)
+
+    def build():
+        return cls(
+            trial_number=attempts.next_attempt_number(db, test_id),
+            test_type=test_type,
+            test_name=test.airtable_section_name,
+            status=_IN_PROGRESS,
+            test_result=_PENDING,
+            operator_name=operator_name,
+            testing_start_date=_utcnow(),
+            labos_test_id=test_id,
+            schema_version=None,
+            **link,
+        )
+
+    attempt = attempts.insert_attempt(db, build)
     db.commit()
     db.refresh(attempt)
     return attempt
 
 
-def _labos_test_id(test, test_type):
-    """Stable across every attempt at the same test — contract §2.
+def _kind_of(test):
+    """Which `attempts` kind token this parent test row is.
 
-    `labos_attempt_id` defaults to a fresh UUID per attempt; this one must NOT,
-    or "attempt 2 of the same test" becomes inexpressible and the outbound
-    envelope cannot populate `LabOS Test ID` and `LabOS Attempt ID` distinctly.
-    Derived from the test row so it survives a restart without a second column.
+    Keyed on the table rather than on `test_type`, because `manual_tests` holds
+    both Forced Entry and ANSI Z97.1 — two test types, one parent table, and it
+    is the table that `labos_test_id` must be derived from.
     """
-    return f"{test_type.lower().replace(' ', '-').replace('.', '')}-{test.id}"
+    return (attempts.IMPACT if test.__tablename__ == "missile_impact_tests"
+            else attempts.MANUAL)
 
 
 def _impact_attempt(db, attempt_id):

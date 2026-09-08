@@ -34,7 +34,11 @@ from sqlalchemy import (
 )
 from sqlalchemy.exc import IntegrityError
 
-from ..airtable.client import request_budget_seconds
+# NOT from `..airtable.client`. This module is persistence only — it must be
+# importable by `report-api` without dragging the HTTP transport into the
+# request path, which is what makes the transactional outbox a real seam
+# rather than a naming convention.
+from ..retry_budget import request_budget_seconds
 from ..data.models import Base
 
 # --- entry states ----------------------------------------------------------

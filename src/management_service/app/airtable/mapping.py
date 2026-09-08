@@ -18,12 +18,26 @@ from . import contract as C
 from .envelope import EnvelopeError
 
 # Which ORM relationship leads from an attempt back to its test, per subclass.
-# Both carry the AirtableProtocolRef mixin, so once found they are interchangeable.
-_TEST_ATTRS = ("static_test", "cyclic_test")
+# **All five test types, not two.** Every one of these tables carries the
+# AirtableProtocolRef mixin, so once found they are interchangeable — the mixin
+# is what makes the four Airtable IDs reachable from any attempt.
+#
+# `manual_test` and `missile_impact_test` were missing until 2026-09-08. The
+# effect was not a partial payload: `envelope_values(strict=True)` raises when
+# the linkage is absent, so **no Impact, Forced Entry or ANSI attempt could be
+# published at all** — and the change document had already told the Airtable
+# team that identity works for all five. A silent None here reads as "this
+# attempt has no Airtable origin", which is a legitimate state for a
+# locally-created job, so nothing distinguished the two.
+_TEST_ATTRS = ("static_test", "cyclic_test", "manual_test", "missile_impact_test")
 
 
 def owning_test(attempt):
-    """The StaticTest / CyclicTest this attempt belongs to, or None."""
+    """The test this attempt belongs to, whichever of the five types it is.
+
+    Returns None only when the attempt genuinely has no parent — which
+    `envelope_values(strict=True)` then reports as missing linkage.
+    """
     for attr in _TEST_ATTRS:
         test = getattr(attempt, attr, None)
         if test is not None:
