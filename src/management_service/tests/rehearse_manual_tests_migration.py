@@ -29,8 +29,7 @@ from tests.rehearse_p1_migration import load_migration as load_p1   # noqa: E402
 from tests.rehearse_m2_migration import load_m2                     # noqa: E402
 
 HERE = Path(__file__).resolve().parent.parent
-MIGRATION = HERE / "alembic" / "versions" / "a3f7c21b9e04_manual_tests_and_evidence.py"
-NUMBERED = HERE / "alembic" / "versions" / "b8d4e15a7c39_numbered_impacts_and_per_shot_photos.py"
+MIGRATION = HERE / "alembic" / "versions" / "d1a6b93f2e57_manual_test_capture.py"
 
 
 def _load(path, name):
@@ -43,10 +42,6 @@ def _load(path, name):
 
 def load_mt():
     return _load(MIGRATION, "mt_mig")
-
-
-def load_num():
-    return _load(NUMBERED, "num_mig")
 
 
 def build_pre_migration_schema(engine):
@@ -131,14 +126,12 @@ def apply(engine, mig, direction):
             getattr(mig, direction)()
 
 
-def check_ordering(p1, m2, mt, num):
+def check_ordering(p1, m2, mt):
     f = []
     if m2.down_revision != p1.revision:
         f.append(f"M2 descends from {m2.down_revision}, expected {p1.revision}")
     if mt.down_revision != m2.revision:
         f.append(f"manual-tests descends from {mt.down_revision}, expected {m2.revision}")
-    if num.down_revision != mt.revision:
-        f.append(f"numbering descends from {num.down_revision}, expected {mt.revision}")
     return f
 
 
@@ -163,24 +156,34 @@ def check_backfill(engine):
         if any(n is None for _, _, n in rows):
             f.append("a pre-existing shot was left unnumbered")
 
-    # And the number must be unique within a test from here on.
+    # Numbering is unique per ATTEMPT, and restarts for the next one - which is
+    # the whole point of re-testing. Legacy shots have a NULL attempt and
+    # Postgres does not collide NULLs, so they are untouched by the constraint.
+    with engine.begin() as c:
+        c.execute(sa.text(
+            "INSERT INTO test_results (id,trial_number,labos_attempt_id,status) "
+            "VALUES (600,1,'uuid-600','In Progress')"))
+        c.execute(sa.text("INSERT INTO impact_test_results (id,"
+                          "missile_impact_test_id) VALUES (600,1)"))
+        c.execute(sa.text("INSERT INTO shots (id,shot_number,result,"
+                          "missile_impact_test_id,test_result_id) "
+                          "VALUES (900,1,true,1,600)"))
     try:
         with engine.begin() as c:
-            c.execute(sa.text(
-                "INSERT INTO shots (id,shot_number,result,missile_impact_test_id) "
-                "VALUES (900,1,true,1)"))
-        f.append("two impacts numbered 1 on the same test were accepted")
+            c.execute(sa.text("INSERT INTO shots (id,shot_number,result,"
+                              "missile_impact_test_id,test_result_id) "
+                              "VALUES (901,1,true,1,600)"))
+        f.append("two impacts numbered 1 in the same attempt were accepted")
     except sa.exc.IntegrityError:
         pass
 
-    # A photograph may now belong to one impact.
+    # A photograph may belong to one impact.
     with engine.begin() as c:
         c.execute(sa.text("INSERT INTO test_photos (id,filename,path,shot_id,"
-                          "missile_impact_test_id) VALUES "
-                          "(50,'i1.jpg','uploads/i1.jpg',1,1)"))
+                          "test_result_id) VALUES (50,'i1.jpg','uploads/i1.jpg',900,600)"))
     with engine.connect() as c:
         n = c.execute(sa.text("SELECT shot_id FROM test_photos WHERE id=50")).scalar()
-        if n != 1:
+        if n != 900:
             f.append("per-impact photograph did not attach")
     return f
 
@@ -193,9 +196,22 @@ def check_schema(engine):
         if t not in names:
             f.append(f"{t} was not created")
 
+    for t in ("manual_test_results", "impact_test_results"):
+        if t not in names:
+            f.append(f"{t} was not created")
+
+    # The attempt record stays on test_results; the subclasses are thin links.
+    tr = {c["name"]: c for c in insp.get_columns("test_results")}
+    for n in ("labos_attempt_id", "labos_test_id", "trial_number",
+              "verdict_by", "verdict_at", "retest_required"):
+        if n not in tr:
+            f.append(f"test_results missing {n}")
+    if not tr.get("retest_required", {}).get("nullable"):
+        f.append("test_results.retest_required must be nullable — NULL is how an "
+                 "unreviewed attempt says nobody has decided (contract §6)")
+
     cols = {c["name"]: c for c in insp.get_columns("missile_impact_tests")}
-    for n in ("labos_attempt_id", "attempt_number", "status", "test_result",
-              "verdict_by", "verdict_at", "retest_required", "airtable_section_id"):
+    for n in ("airtable_section_id", "finished"):
         if n not in cols:
             f.append(f"missile_impact_tests missing {n}")
     for n in ("missile", "missile_weight"):
@@ -226,7 +242,9 @@ def check_live_rows_survived(engine):
                                 "missile_impact_tests WHERE id=1")).one()
         if row.missile != "Large Missile D" or row.missile_weight != 9.0:
             f.append(f"pre-existing impact row was altered: {row}")
-        n = c.execute(sa.text("SELECT count(*) FROM shots")).scalar()
+        # Only the seeded rows: the checks that ran before this one add their
+        # own, and the question here is whether the *pre-existing* ones survived.
+        n = c.execute(sa.text("SELECT count(*) FROM shots WHERE id <= 4")).scalar()
         if n != 4:
             f.append(f"expected 4 pre-existing shots, found {n}")
         # The widening must actually be usable, not merely declared.
@@ -245,39 +263,51 @@ def check_live_rows_survived(engine):
 
 def check_manual_tests_work(engine):
     f = []
+    # Two levels: the test, then attempts on it sharing one labos_test_id.
     with engine.begin() as c:
         for i, (typ, opt) in enumerate((("Forced Entry", "ASTM F588 Grade 40"),
                                         ("ANSI Z97.1", "Class A")), start=1):
             c.execute(sa.text(
                 "INSERT INTO manual_tests (id,project_id,type,required_option,"
-                "labos_attempt_id,attempt_number,status,test_result) VALUES "
-                "(:i,1,:t,:o,:a,1,'In Progress','Pending')"),
-                {"i": i, "t": typ, "o": opt, "a": f"uuid-{i}"})
+                "finished) VALUES (:i,1,:t,:o,false)"),
+                {"i": i, "t": typ, "o": opt})
+        for aid, trial in ((500, 1), (501, 2)):
+            c.execute(sa.text(
+                "INSERT INTO test_results (id,trial_number,labos_attempt_id,"
+                "labos_test_id,status,test_result) VALUES "
+                "(:i,:t,:a,'forced-entry-1','In Progress','Pending')"),
+                {"i": aid, "t": trial, "a": f"uuid-{aid}"})
+            c.execute(sa.text("INSERT INTO manual_test_results (id,manual_test_id) "
+                              "VALUES (:i,1)"), {"i": aid})
     with engine.connect() as c:
-        n = c.execute(sa.text("SELECT count(*) FROM manual_tests")).scalar()
-        if n != 2:
-            f.append(f"expected 2 manual tests, found {n}")
-    # The attempt id is the upsert key; a duplicate must be impossible.
+        rows = c.execute(sa.text(
+            "SELECT labos_test_id, trial_number FROM test_results "
+            "WHERE id IN (500,501) ORDER BY trial_number")).all()
+        if [r.trial_number for r in rows] != [1, 2]:
+            f.append("attempt numbering did not survive")
+        if len({r.labos_test_id for r in rows}) != 1:
+            f.append("two attempts at one test must share labos_test_id — that is "
+                     "what makes 'attempt 2 of the same test' expressible")
+
+    # labos_attempt_id is the Airtable upsert key; duplicates must be impossible.
     try:
         with engine.begin() as c:
             c.execute(sa.text(
-                "INSERT INTO manual_tests (id,project_id,type,labos_attempt_id,"
-                "attempt_number,status,test_result) VALUES "
-                "(3,1,'Forced Entry','uuid-1',1,'In Progress','Pending')"))
-        f.append("duplicate labos_attempt_id was accepted — the upsert key is not unique")
+                "INSERT INTO test_results (id,trial_number,labos_attempt_id,status) "
+                "VALUES (502,3,'uuid-500','In Progress')"))
+        f.append("duplicate labos_attempt_id accepted — the upsert key is not unique")
     except sa.exc.IntegrityError:
         pass
-    # A photo must attach to either owner, and to neither by accident.
+
+    # A photograph belongs to an attempt, and optionally to one impact.
     with engine.begin() as c:
-        c.execute(sa.text("INSERT INTO test_photos (id,filename,path,manual_test_id) "
-                          "VALUES (1,'fe.jpg','uploads/fe.jpg',1)"))
-        c.execute(sa.text("INSERT INTO test_photos (id,filename,path,"
-                          "missile_impact_test_id) VALUES (2,'imp.jpg','uploads/imp.jpg',1)"))
+        c.execute(sa.text("INSERT INTO test_photos (id,filename,path,test_result_id) "
+                          "VALUES (1,'fe.jpg','uploads/fe.jpg',500)"))
     try:
         with engine.begin() as c:
-            c.execute(sa.text("INSERT INTO test_photos (id,filename,path,manual_test_id) "
-                              "VALUES (3,'x.jpg','uploads/x.jpg',999)"))
-        f.append("a photo attached to a non-existent manual test — FK not enforced")
+            c.execute(sa.text("INSERT INTO test_photos (id,filename,path,"
+                              "test_result_id) VALUES (3,'x.jpg','uploads/x.jpg',9999)"))
+        f.append("a photo attached to a non-existent attempt — FK not enforced")
     except sa.exc.IntegrityError:
         pass
     return f
@@ -291,15 +321,14 @@ def main():
         return 2
 
     engine = sa.create_engine(url)
-    p1, m2, mt, num = load_p1(), load_m2(), load_mt(), load_num()
+    p1, m2, mt = load_p1(), load_m2(), load_mt()
 
-    failures = check_ordering(p1, m2, mt, num)
+    failures = check_ordering(p1, m2, mt)
     if failures:
         for x in failures:
             print("  FAIL", x)
         return 1
-    print(f"ordering OK: {p1.revision} -> {m2.revision} -> {mt.revision} "
-          f"-> {num.revision}")
+    print(f"ordering OK: {p1.revision} -> {m2.revision} -> {mt.revision}")
 
     with engine.begin() as conn:
         conn.exec_driver_sql("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
@@ -308,8 +337,7 @@ def main():
     print("seeded the live production shape: 2 impact tests, 4 interleaved shots, "
           "NOT NULL as on the node")
 
-    for mig, label in ((p1, "P1"), (m2, "M2"), (mt, "manual-tests"),
-                       (num, "numbering")):
+    for mig, label in ((p1, "P1"), (m2, "M2"), (mt, "manual-tests")):
         apply(engine, mig, "upgrade")
         print(f"{label} {mig.revision} upgraded")
 
@@ -322,11 +350,12 @@ def main():
     if not failures:
         print("schema, live-row survival and behaviour all verified")
 
-    for mig, label in ((num, "numbering"), (mt, "manual-tests"),
-                       (m2, "M2"), (p1, "P1")):
+    for mig, label in ((mt, "manual-tests"), (m2, "M2"), (p1, "P1")):
         apply(engine, mig, "downgrade")
         print(f"{label} downgraded")
-    remaining = set(sa.inspect(engine).get_table_names()) & {"manual_tests", "test_photos"}
+    remaining = (set(sa.inspect(engine).get_table_names())
+                 & {"manual_tests", "test_photos", "manual_test_results",
+                    "impact_test_results"})
     if remaining:
         failures.append(f"downgrade left {sorted(remaining)} behind")
 
@@ -335,8 +364,8 @@ def main():
         for x in failures:
             print("  -", x)
         return 1
-    print("\nP1 -> M2 -> manual-tests -> numbering rehearsed against populated "
-          "tables, verified and rolled back: OK")
+    print("\nP1 -> M2 -> manual-tests rehearsed against populated tables, "
+          "verified and rolled back: OK")
     return 0
 
 

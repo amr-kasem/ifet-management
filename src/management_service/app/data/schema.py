@@ -238,45 +238,81 @@ class DeviceTurboSlave(BaseModel):
 
 # ---------------------------------------------------- manual test capture ---
 #
-# Impact, Forced Entry and ANSI Z97.1. Delivery plan §4.5. None of the three
-# touches the rig, so nothing here has a setpoint, a duration or a stage.
+# Impact, Forced Entry and ANSI Z97.1. Delivery plan §4.5.
 #
-# Three phases, matching the write contract: create -> finish -> verdict.
-# `Test Result` is Pending from create until a named reviewer records a verdict,
-# and the operator's `result` boolean is a different thing from the reviewer's
-# `test_result` - different people, different moments.
+# Two levels, matching the rest of the codebase: a **test** row, and **attempt**
+# rows under it. `TestResult` already is the attempt record — `trial_number` is
+# Attempt Number, and it carries both UUIDs, the lifecycle, the correction chain
+# and the review columns — so `AttemptSchema` below serialises it for every test
+# type rather than each type declaring its own.
 
 MANUAL_TEST_TYPES = ("Forced Entry", "ANSI Z97.1")
 
 
-class ManualTestCreateSchema(BaseModel):
-    """Start a Forced Entry or ANSI Z97.1 attempt.
-
-    `attempt_number`, `labos_attempt_id` and `status` are allocated
-    server-side - a client that could choose its own attempt number could
-    silently overwrite an earlier one.
-    """
-
-    type: Literal["Forced Entry", "ANSI Z97.1"]
-    # The grade or class the protocol requires, e.g. "ASTM F588 Grade 40" or
-    # "Class A". Pre-filled from Airtable's `Required Option` when the job came
-    # from there, typed by the operator when it did not.
-    required_option: Optional[str] = None
-    operator_name: Optional[str] = None
-    # Airtable linkage, all optional: a LabOS-only test has none and stays legal.
-    airtable_protocol_id: Optional[str] = None
-    airtable_section_id: Optional[str] = None
-    airtable_section_name: Optional[str] = None
+class PhotoSchema(BaseModel):
+    id: int
+    filename: str
+    note: Optional[str] = None
+    created_at: Optional[_dt.datetime] = None
+    # Set when the photograph shows one specific impact; None when it belongs
+    # to the attempt as a whole.
+    shot_id: Optional[int] = None
 
     class Config:
         from_attributes = True
 
 
-class ManualTestFinishSchema(BaseModel):
-    """Terminate. Explicit completion, or an abort with a reason - never inferred.
+class ShotRecordSchema(BaseModel):
+    """One impact. Pass or fail is the whole requirement; the rest is optional.
 
-    `result` is the operator's recorded outcome. It is not the verdict: the
-    verdict is a separate act by a named reviewer (write contract §4).
+    `result` has no default on purpose. An impact without an outcome is not an
+    impact, and a default of False would record a failure nobody observed.
+
+    `shot_number` is **not** accepted: it is allocated server-side in the order
+    impacts are recorded. A client that chose its own could number two the same,
+    or renumber a sequence someone has already photographed.
+    """
+
+    result: bool
+    area: Optional[float] = None
+    velocity: Optional[float] = None
+    note: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ShotDetailSchema(BaseModel):
+    """A recorded impact with its own photographs."""
+
+    id: int
+    # The ordinal the operator sees — impact 1, 2, 3 — not the database id.
+    shot_number: int
+    result: bool
+    area: Optional[float] = None
+    velocity: Optional[float] = None
+    note: Optional[str] = None
+    photos: List[PhotoSchema] = []
+
+    class Config:
+        from_attributes = True
+
+
+class AttemptStartSchema(BaseModel):
+    """Begin an attempt. Identity and the attempt number are server-side."""
+
+    operator_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class AttemptFinishSchema(BaseModel):
+    """Terminate. Explicit completion, or an abort with a reason — never inferred.
+
+    `result` is the **operator's** recorded outcome, and is required to complete
+    a Forced Entry or ANSI attempt. It is not the verdict: the verdict is a
+    separate act by a named reviewer (write contract §4).
     """
 
     result: Optional[bool] = None
@@ -305,14 +341,54 @@ class VerdictSchema(BaseModel):
         from_attributes = True
 
 
-class PhotoSchema(BaseModel):
+class AttemptSchema(BaseModel):
+    """One attempt at any test type — the serialised `TestResult`."""
+
     id: int
-    filename: str
+    # `trial_number` already means what the contract calls Attempt Number, so it
+    # is reused rather than duplicated.
+    trial_number: int
+    labos_attempt_id: Optional[str] = None
+    labos_test_id: Optional[str] = None
+
+    test_type: Optional[str] = None
+    test_name: Optional[str] = None
+    status: Optional[str] = None
+    # The reviewer's verdict: Pending until the first review.
+    test_result: Optional[str] = None
+    # The operator's recorded outcome — a different field, on purpose.
+    result: Optional[bool] = None
+    abort_reason: Optional[str] = None
+
+    operator_name: Optional[str] = None
+    verdict_by: Optional[str] = None
+    verdict_at: Optional[_dt.datetime] = None
+    retest_required: Optional[bool] = None
+    result_rationale: Optional[str] = None
+
+    testing_start_date: Optional[_dt.datetime] = None
+    testing_end_date: Optional[_dt.datetime] = None
+    testing_continued: Optional[str] = None
     note: Optional[str] = None
-    created_at: Optional[_dt.datetime] = None
-    # Set when the photograph shows one specific impact; None when it belongs
-    # to the attempt as a whole.
-    shot_id: Optional[int] = None
+
+    photos: List[PhotoSchema] = []
+
+    class Config:
+        from_attributes = True
+
+
+class ManualTestCreateSchema(BaseModel):
+    """Create a Forced Entry or ANSI Z97.1 test. Attempts start separately."""
+
+    type: Literal["Forced Entry", "ANSI Z97.1"]
+    # The grade or class the protocol requires, e.g. "ASTM F588 Grade 40" or
+    # "Class A". Pre-filled from Airtable's `Required Option` when the job came
+    # from there, typed by the operator when it did not.
+    required_option: Optional[str] = None
+    # Airtable linkage, all optional: a LabOS-only test has none and stays legal.
+    airtable_protocol_id: Optional[str] = None
+    airtable_section_id: Optional[str] = None
+    airtable_section_name: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -323,85 +399,31 @@ class ManualTestSchema(BaseModel):
     project_id: int
     type: str
     required_option: Optional[str] = None
-    result: Optional[bool] = None
-
-    labos_attempt_id: str
-    attempt_number: int
-    status: str
-    test_result: str
-    abort_reason: Optional[str] = None
-
-    operator_name: Optional[str] = None
-    verdict_by: Optional[str] = None
-    verdict_at: Optional[_dt.datetime] = None
-    retest_required: Optional[bool] = None
-
-    testing_start_date: Optional[_dt.datetime] = None
-    testing_end_date: Optional[_dt.datetime] = None
-    testing_continued: Optional[str] = None
-    note: Optional[str] = None
+    finished: bool
 
     airtable_protocol_id: Optional[str] = None
     airtable_section_id: Optional[str] = None
     airtable_section_name: Optional[str] = None
 
-    photos: List[PhotoSchema] = []
+    trials: List[AttemptSchema] = []
 
     class Config:
         from_attributes = True
 
 
-# ------------------------------------------------------------------ impact ---
-#
-# `MissileImpactTestCreateSchema` and `ShotCreateSchema` already exist above and
-# are kept, because report generation reads them. These add the attempt identity
-# the existing pair never had, and relax what a shot must carry.
-
-
 class ImpactTestCreateSchema(BaseModel):
-    """Start a missile impact attempt.
+    """Create a missile impact test.
 
     Missile and weight are optional: the protocol normally fixes them, and
-    requiring them per attempt was retyping rather than data capture. When the
-    job came from Airtable they are pre-filled from `Missile Type` and
-    `Missile Weight`.
+    requiring them was retyping rather than data capture. Pre-filled from
+    `Missile Type` and `Missile Weight` when the job came from Airtable.
     """
 
     missile: Optional[str] = None
     missile_weight: Optional[float] = None
-    operator_name: Optional[str] = None
     airtable_protocol_id: Optional[str] = None
     airtable_section_id: Optional[str] = None
     airtable_section_name: Optional[str] = None
-
-    class Config:
-        from_attributes = True
-
-
-class ShotRecordSchema(BaseModel):
-    """One impact. Pass or fail is the whole requirement; the rest is optional.
-
-    `result` has no default on purpose. A shot without an outcome is not a shot,
-    and a default of False would silently record a failure nobody observed.
-
-    `shot_number` is **not** accepted: it is allocated server-side in the order
-    impacts are recorded. A client that chose its own could number two impacts
-    the same, or renumber a sequence someone has already photographed.
-    """
-
-    result: bool
-    area: Optional[float] = None
-    velocity: Optional[float] = None
-    note: Optional[str] = None
-
-    class Config:
-        from_attributes = True
-
-
-class ShotDetailSchema(ShotSchema):
-    """A recorded impact with its own photographs."""
-
-    photos: List[PhotoSchema] = []
 
     class Config:
         from_attributes = True
@@ -412,31 +434,13 @@ class ImpactTestSchema(BaseModel):
     project_id: int
     missile: Optional[str] = None
     missile_weight: Optional[float] = None
-
-    labos_attempt_id: str
-    attempt_number: int
-    status: str
-    test_result: str
-    abort_reason: Optional[str] = None
-
-    operator_name: Optional[str] = None
-    verdict_by: Optional[str] = None
-    verdict_at: Optional[_dt.datetime] = None
-    retest_required: Optional[bool] = None
-
-    testing_start_date: Optional[_dt.datetime] = None
-    testing_end_date: Optional[_dt.datetime] = None
-    testing_continued: Optional[str] = None
-    note: Optional[str] = None
+    finished: bool
 
     airtable_protocol_id: Optional[str] = None
     airtable_section_id: Optional[str] = None
     airtable_section_name: Optional[str] = None
 
-    # Numbered, each with its own value and its own photographs.
-    shots: List[ShotDetailSchema] = []
-    # Attempt-level photographs — those not tied to a single impact.
-    photos: List[PhotoSchema] = []
+    trials: List[AttemptSchema] = []
 
     class Config:
         from_attributes = True

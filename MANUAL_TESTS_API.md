@@ -4,7 +4,7 @@
 not the Airtable interface contract and nothing here crosses that boundary —
 these routes never call Airtable, and Airtable never calls them.
 
-Thirteen routes covering **Impact**, **Forced Entry** and **ANSI Z97.1**: the three
+Routes covering **Impact**, **Forced Entry** and **ANSI Z97.1**: the three
 tests an operator enters by hand. Static Load and Cycles are unchanged and are
 not described here.
 
@@ -32,18 +32,41 @@ Two things worth knowing before building screens:
 
 ---
 
-## 2. The shape of every attempt
+## 2. Two levels — the test, and attempts at it
 
-All three follow the same three phases. This is the part to get right; the
-individual routes are mechanical once it is clear.
+This follows the shape the codebase already uses. It is not new structure:
 
 ```
-  create  ──────────►  finish  ──────────►  verdict
-  operator starts      operator records     REVIEWER decides
-  status: In Progress  status: Completed    test_result: Pass/Fail/
-  test_result: Pending  or Aborted                       Inconclusive
-                       test_result: STILL Pending
+static_tests          ──trials──►  static_test_results   ──►  deflections
+cyclic_tests          ──trials──►  cyclic_test_results   ──►  deflections
+manual_tests          ──trials──►  manual_test_results
+missile_impact_tests  ──trials──►  impact_test_results   ──►  shots
 ```
+
+**So: create the test, then start an attempt on it.** `POST …/trials` is the
+"start" — the operator pressing the button — exactly as static and cyclic
+record theirs.
+
+The attempt row is a `TestResult`, which already carries `trial_number`
+(= Attempt Number), `labos_attempt_id`, `labos_test_id`, the correction chain
+and the review columns. That is why two levels rather than one flat row:
+**`labos_test_id` is stable across every attempt at the same test**, and without
+it "attempt 2 of the same test" cannot be expressed — nor can the Airtable
+payload, which requires `LabOS Test ID` and `LabOS Attempt ID` as separate
+fields on every phase.
+
+### Attempt phases
+
+```
+  POST …/trials  ─────►  PUT /test-results/{id}/finish  ─────►  PUT …/verdict
+  status: In Progress    status: Completed | Aborted            REVIEWER decides
+  test_result: Pending   test_result: STILL Pending             Pass|Fail|Inconclusive
+```
+
+**Everything that acts on an attempt lives on `/test-results/{id}`** — terminate,
+review, attach evidence. One route each, for all five test types, because it is
+the same business whatever was tested. There is no per-type copy, and static and
+cyclic inherit review and evidence the day they need it.
 
 **The two words that look the same and are not:**
 
@@ -52,159 +75,93 @@ individual routes are mechanical once it is clear.
 | `result` (boolean) | the **operator** | `finish` | "the specimen resisted / it did not" |
 | `test_result` (string) | the **reviewer** | `verdict` | `Pending` → `Pass` \| `Fail` \| `Inconclusive` |
 
-They are deliberately separate columns. Collapsing them would let an operator
-certify their own work, and the review is a distinct act with a name and a
-timestamp on it. **`operator_name` and `verdict_by` are stored separately even
-when the same person does both.**
+Separate columns on purpose. Collapsing them would let an operator certify their
+own work. `operator_name` and `verdict_by` are likewise stored separately even
+when the same person does both.
 
 Neither is authenticated — LabOS has no user table. Both are declared names the
-UI supplies. The UI should remember the last operator per device so it is not
-retyped, but it cannot *prove* identity and should not imply that it does.
+UI supplies; remember the last operator per device, but do not imply proof.
 
-**Rules the API enforces, so the UI does not have to guess:**
+**Rules the API enforces, so the UI need not guess:**
 
-1. A verdict before `finish` → **400**. Evidence freezes on termination, then it
-   is reviewed.
-2. A second verdict → **409**. The first stands; a change is a *new attempt*
-   referring to the old one, never an edit.
-3. A photo after the verdict → **409**. Adding substantive evidence to a
-   reviewed attempt requires a correction.
+1. A verdict before `finish` → **400**. Evidence freezes on termination.
+2. A second verdict → **409**. The first stands; a change is a *new attempt*.
+3. A photo after the verdict → **409**.
 4. `finish` on an already-finished attempt → **400**.
-5. `retest_required` has **no default**. An unchecked box is not a decision.
-6. Completion is explicit, or it is an abort with a reason. **Missing data is
-   never a pass.**
+5. An attempt on a finished test → **400**.
+6. `retest_required` has **no default**. `null` means nobody has decided.
+7. Completion is explicit, or an abort with a reason. **Missing data is never a
+   pass.**
 
-`attempt_number` and `labos_attempt_id` are allocated **server-side**. Do not
-send them. Every attempt is retained — running the same test again creates
-attempt 2, it does not overwrite attempt 1.
+`trial_number`, `labos_attempt_id` and `labos_test_id` are allocated
+server-side. Do not send them. Every attempt is retained.
 
----
-
-## 3. Forced Entry and ANSI Z97.1 — 5 routes
+## 3. Forced Entry and ANSI Z97.1
 
 Both live in one table, distinguished by `type`.
 
-### `POST /projects/{project_id}/manual-tests/`
-Start an attempt.
+| Route | |
+|---|---|
+| `POST /projects/{pid}/manual-tests/` | create the test — `type` is `Forced Entry` or `ANSI Z97.1` (anything else **422**), plus `required_option` (the grade or class) and the optional `airtable_*` links |
+| `GET /projects/{pid}/manual-tests/` | list tests with their attempts; optional `?type=` |
+| `POST /projects/{pid}/manual-tests/{id}/trials` | **start an attempt** — `{"operator_name": "technician-1"}` |
+| `GET /projects/{pid}/manual-tests/{id}/trials` | attempts in order |
+| `PUT /projects/{pid}/manual-tests/{id}/finish` | mark the test complete; no further attempts |
 
-```json
-{ "type": "Forced Entry",
-  "required_option": "ASTM F588 Grade 40",
-  "operator_name": "technician-1",
-  "airtable_section_id": "recSec…" }
+Then the shared attempt routes in §5.
+
+## 4. Impact
+
+An impact test is a **sequence**: impact 1, impact 2, impact 3 — each numbered,
+each with its own pass/fail, each with its own photographs.
+
 ```
-`type` is `"Forced Entry"` or `"ANSI Z97.1"` — anything else is **422**.
-`required_option` is the grade or class; pre-filled from Airtable when the job
-came from there, typed otherwise. The three `airtable_*` fields are optional and
-absent for a LabOS-only job. → `200` with the full attempt.
-
-### `GET /projects/{project_id}/manual-tests/?type=ANSI%20Z97.1`
-List attempts, newest last, each with its `photos`. `type` filter optional.
-
-### `PUT /manual-tests/{test_id}/finish`
-```json
-{ "result": true, "note": "no entry achieved", "testing_continued": "Stopped" }
+impact test
+  └── attempt 1
+        ├── impact 1   result: pass    photos: [ ]
+        ├── impact 2   result: pass    photos: [ 1 ]
+        └── impact 3   result: FAIL    photos: [ corner detail, wide shot ]
+        └── attempt-level photos: [ specimen before ]
 ```
-or to abandon: `{ "abort_reason": "Equipment Fault" }`
 
-`result` is **required** unless aborting → **400** otherwise. `test_result`
-stays `Pending`.
+| Route | |
+|---|---|
+| `POST /projects/{pid}/impact-tests/` | create the test. **Everything optional** — the protocol fixes the missile, so `{}` is valid |
+| `GET /projects/{pid}/impact-tests/` | list with attempts |
+| `POST /projects/{pid}/impact-tests/{id}/trials` | start an attempt |
+| `GET /projects/{pid}/impact-tests/{id}/trials` | attempts in order |
+| `PUT /projects/{pid}/impact-tests/{id}/finish` | mark the test complete |
+| `POST /test-results/{aid}/shots` | **record one impact** — `{"result": true}`. `result` is the only required field; `area`, `velocity`, `note` optional. Omitting it is **422** |
+| `GET /test-results/{aid}/shots` | the impacts **in order**, each with its photographs |
+| `POST /shots/{sid}/photos` | photograph of **one specific impact** |
 
-### `PUT /manual-tests/{test_id}/verdict`
-```json
-{ "test_result": "Pass", "verdict_by": "reviewer-1",
-  "retest_required": false, "rationale": "optional; appended to notes" }
-```
+**`shot_number` is allocated server-side** — 1, 2, 3 in recording order,
+restarting at 1 for each attempt. Not accepted from the client: one that chose
+its own could number two impacts the same, or renumber a sequence already
+photographed. Sending it is ignored, not rejected.
+
+**Finishing an impact attempt** additionally requires at least one impact and at
+least one photograph (not when aborting). A per-impact photograph counts, so
+photographing the impacts satisfies it without a separate upload.
+
+The photo requirement is enforced at finish, **not** when publishing to Airtable:
+attachments deliver on their own channel and may settle later, so making an
+upload a precondition for publishing would let a queued file block a measured
+result.
+
+## 5. The attempt routes — all five test types
+
+| Route | |
+|---|---|
+| `PUT /test-results/{id}/finish` | `{"result": true, "note": "...", "testing_continued": "Stopped"}` or `{"abort_reason": "Equipment Fault"}`. `result` required to complete a manual attempt |
+| `PUT /test-results/{id}/verdict` | `{"test_result": "Pass", "verdict_by": "reviewer-1", "retest_required": false, "rationale": "optional"}` |
+| `POST /test-results/{id}/photos` | attempt-level evidence; `multipart/form-data` with `file` and optional `note` |
+| `GET /test-results/{id}` | the attempt (pre-existing route) |
+
 `test_result` must be `Pass`, `Fail` or `Inconclusive` — **not** the Airtable
 spellings `Passed`/`Failed`, which the sync layer translates later.
 
-### `POST /manual-tests/{test_id}/photos`
-`multipart/form-data`: `file` (required), `note` (optional). Optional for these
-two test types.
-
----
-
-## 4. Impact — 8 routes
-
-Same three phases, plus the impacts themselves.
-
-**An impact test is a sequence, not a set.** Impact 1, impact 2, impact 3 —
-each numbered, each with its own pass/fail, each with its own photographs.
-"The third impact cracked the corner" is a sentence someone will need to write,
-and a database id is not that number.
-
-```
-  impact test
-    ├── impact 1   result: pass    photos: [ ]
-    ├── impact 2   result: pass    photos: [ 2 ]
-    └── impact 3   result: FAIL    photos: [ corner detail, wide shot ]
-    └── attempt-level photos: [ specimen before ]
-```
-
-### `POST /projects/{project_id}/impact-tests/`
-```json
-{ "missile": "Large Missile D", "missile_weight": 9.0,
-  "operator_name": "technician-1" }
-```
-**Everything is optional.** The protocol fixes the missile, so requiring it per
-attempt was retyping. `{}` is a valid body.
-
-### `GET /projects/{project_id}/impact-tests/`
-Each attempt carries its `shots` and `photos`.
-
-### `POST /impact-tests/{test_id}/shots`
-Record one impact.
-```json
-{ "result": true, "note": "corner cracked" }
-```
-`result` is the **only** required field. `area`, `velocity` and `note` are
-optional. Omitting `result` is **422**: an impact without an outcome is not an
-impact.
-
-**`shot_number` is allocated server-side** — 1, 2, 3 in the order recorded, and
-restarting at 1 for each attempt. It is **not accepted from the client**: a
-client that chose its own could number two impacts the same, or renumber a
-sequence someone has already photographed. Sending it is ignored, not rejected.
-
-The response is the impact including its `shot_number` and (initially empty)
-`photos`. Post one per impact; refused once the attempt is finished.
-
-### `GET /impact-tests/{test_id}/shots`
-The impacts **in order**, each with its value and its photographs. This is the
-list the impact screen renders.
-
-### `POST /shots/{shot_id}/photos`
-Attach a photograph to **one specific impact**. `multipart/form-data`: `file`
-required, `note` optional.
-
-A per-impact photograph also counts as attempt evidence, so photographing each
-impact satisfies the finish requirement without a separate upload. Frozen after
-the verdict, like all evidence (**409**).
-
-### `PUT /impact-tests/{test_id}/finish`
-Same body as the manual finish. Two extra preconditions when completing (not
-when aborting):
-
-- **at least one impact recorded** → 400 otherwise
-- **at least one photograph** → 400 otherwise. Per-impact photographs count, so
-  this is satisfied naturally by photographing the impacts
-
-Impact is the only type that requires a photo, and it is required *here*, at
-finish — not when publishing to Airtable. Attachments upload on their own
-channel and may settle later, so making the upload a precondition for publishing
-would let a queued file block a measured result.
-
-### `PUT /impact-tests/{test_id}/verdict`
-Identical to the manual verdict.
-
-### `POST /impact-tests/{test_id}/photos`
-An **attempt-level** photograph — the specimen before testing, the overall
-setup. Use `/shots/{id}/photos` for anything showing a particular impact.
-Upload before `finish`, since finish requires at least one photograph.
-
----
-
-## 5. What the UI needs to supply, and where it comes from
+## 6. What the UI needs to supply, and where it comes from
 
 | Field | Airtable-linked job | LabOS-only job |
 |---|---|---|
@@ -220,7 +177,7 @@ fully testable — that is the normal mode, not a degraded one.
 
 ---
 
-## 6. Things that will bite
+## 7. Things that will bite
 
 - **`test_result` is `Pending` after `finish`.** A screen showing "Completed"
   next to "Pending" is correct, not a bug. It means: tested, awaiting review.
@@ -230,6 +187,7 @@ fully testable — that is the normal mode, not a degraded one.
   the verdict, then frozen.
 - **Errors are meant to be shown.** The `detail` strings say what to do next;
   surface them rather than replacing them with "something went wrong".
+- **A test with no attempts is normal.** It means created, not yet started.
 - **`GET /projects/{id}` still works and now includes these.** `ProjectSchema`
   embeds `missile_impact_tests`; its `missile` and shot `area`/`velocity` are
   now nullable, so handle `null`.
@@ -263,7 +221,7 @@ groups both workflows natively. That stays true whatever detail we add locally.
 
 ---
 
-## 7. Running it locally
+## 9. Running it locally
 
 ```bash
 docker compose -f src/management_service/tests/postgres_harness/docker-compose.yaml up -d

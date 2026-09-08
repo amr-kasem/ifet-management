@@ -39,52 +39,6 @@ class AirtableProtocolRef:
     airtable_section_name = Column(String, nullable=True)
 
 
-class ManualAttempt:
-    """Mixin — one attempt at a manually-entered test.
-
-    Impact, Forced Entry and ANSI Z97.1 do not touch the rig: no VFD, no valves,
-    no pressure setpoint, no stage trials. `state_machine` handles exactly one
-    command (`start`, mode `manual` or `cyclic`) and none of these three is
-    either, so the firmware is not involved and needs no release.
-
-    These columns are precisely what `app.airtable.envelope` consumes, so an
-    attempt maps to the outbound payload without a translation layer. Static and
-    cyclic take the same mixin later, which is why it is a mixin and not three
-    copies.
-
-    The three review columns are nullable **together**: an unreviewed attempt has
-    not answered the retest question, and `bool(None)` would publish a decision
-    nobody made (write contract §6).
-    """
-
-    labos_attempt_id = Column(String, nullable=False, unique=True, index=True,
-                              default=lambda: str(uuid.uuid4()))
-    attempt_number = Column(Integer, nullable=False, default=1)
-
-    # In Progress -> Completed | Aborted. Never inferred from a timeout or a
-    # disconnect: completion is explicit or it is an abort with a reason.
-    status = Column(String, nullable=False, default="In Progress")
-    abort_reason = Column(String, nullable=True)
-
-    # Pending until the first review. Passed/Failed/Inconclusive are the
-    # reviewer's, never the operator's.
-    test_result = Column(String, nullable=False, default="Pending")
-
-    # Declared identity, not authenticated - LabOS has no user table, and the
-    # contract records this honestly as `identity_assurance = declared`.
-    # Operator and reviewer are stored separately even when they are the same
-    # person, because the review is a distinct act.
-    operator_name = Column(String, nullable=True)
-    verdict_by = Column(String, nullable=True)
-    verdict_at = Column(DateTime(timezone=True), nullable=True)
-    retest_required = Column(Boolean, nullable=True)
-
-    testing_start_date = Column(DateTime(timezone=True), nullable=True)
-    testing_end_date = Column(DateTime(timezone=True), nullable=True)
-    testing_continued = Column(String, nullable=True)
-    note = Column(Text, nullable=True)
-
-
 class Device(Base):
     __tablename__ = "devices"
 
@@ -185,7 +139,7 @@ class InfiltrationTest(Base):
     project_id = Column(Integer, ForeignKey('projects.id'))
     project = relationship("Project", back_populates="infiltration_tests")
 
-class MissileImpactTest(Base, AirtableProtocolRef, ManualAttempt):
+class MissileImpactTest(Base, AirtableProtocolRef):
     """Windborne-debris missile impact (ASTM E1886/E1996).
 
     **Already in production use — 39 tests and 114 shots on the live node.** So
@@ -206,12 +160,17 @@ class MissileImpactTest(Base, AirtableProtocolRef, ManualAttempt):
     id = Column(Integer, primary_key=True, index=True)
     missile = Column(String, nullable=True)
     missile_weight = Column(Float, nullable=True)
+    finished = Column(Boolean, nullable=False, default=False)
 
     project_id = Column(Integer, ForeignKey('projects.id'))
     project = relationship("Project", back_populates="missile_impact_tests")
 
+    # Kept: production reports read `test.shots` directly, and 114 rows predate
+    # the attempt level. New shots also carry `test_result_id`, which is the
+    # semantic parent — this FK is what lets the existing report query keep
+    # working unchanged through the transition.
     shots = relationship("Shot", back_populates="missile_impact_test", cascade="all, delete-orphan")
-    photos = relationship("TestPhoto", back_populates="missile_impact_test",
+    trials = relationship("ImpactTestResult", back_populates="missile_impact_test",
                           cascade="all, delete-orphan")
 
 class Shot(Base):
@@ -236,28 +195,44 @@ class Shot(Base):
     missile_impact_test_id = Column(Integer, ForeignKey('missile_impact_tests.id'))
     missile_impact_test = relationship("MissileImpactTest", back_populates="shots")
 
-    # Photographs of this specific impact. An attempt-level photograph has
-    # `shot_id` NULL and hangs off the test instead.
+    # The attempt this impact was recorded in — the semantic parent, mirroring
+    # `Deflection.test_id`, which is how the rig tests attach their readings.
+    # Nullable only because 114 production shots predate the attempt level.
+    test_result_id = Column(Integer, ForeignKey('test_results.id'), nullable=True)
+    test_result = relationship("ImpactTestResult", back_populates="shots")
+
+    # Photographs of this specific impact.
     photos = relationship("TestPhoto", back_populates="shot",
                           cascade="all, delete-orphan")
 
     __table_args__ = (
-        UniqueConstraint("missile_impact_test_id", "shot_number",
-                         name="uq_shots_test_number"),
+        # Per attempt, not per test: numbering restarts at 1 for each attempt.
+        UniqueConstraint("test_result_id", "shot_number",
+                         name="uq_shots_attempt_number"),
     )
 
-class ManualTest(Base, AirtableProtocolRef, ManualAttempt):
+class ManualTest(Base, AirtableProtocolRef):
     """Forced Entry and ANSI Z97.1 — one table, discriminated by `type`.
 
-    Both are recorded as a pass/fail outcome against a named class or grade,
-    with notes and optional photographs. The shape is identical, so two tables
-    would be duplication rather than fidelity to the repo pattern - and
-    `StaticTest` already carries a `type` column, so this is the pattern.
+    Shaped like `StaticTest` and `CyclicTest` because it is the same kind of
+    thing: **the test**, not an attempt at it. Attempts are `ManualTestResult`
+    rows, exactly as static and cyclic keep theirs in `static_test_results` and
+    `cyclic_test_results`.
 
-    ANSI Z97.1 is a bag-drop safety-glazing test and is normally performed first
-    on a specimen. That ordering is **informational only** and deliberately not
-    enforced: a hard block would eventually stop legitimate work, and there is
-    no override in this design.
+    That split is not stylistic. `TestResult` already carries `trial_number`,
+    `labos_attempt_id`, `labos_test_id`, the correction chain, the lifecycle and
+    the review columns, and `labos_test_id` is what makes "attempt 2 of the same
+    test" expressible at all. A single flat row could not populate both
+    `LabOS Test ID` and `LabOS Attempt ID`, which the outbound envelope requires
+    on every phase — so it could never have been synced.
+
+    Both types are recorded as pass/fail against a named grade or class. The
+    shape is identical, so one table with a discriminator rather than two;
+    `StaticTest` already carries a `type` column, so this follows the pattern.
+
+    ANSI Z97.1 is normally performed first on a specimen. That ordering is
+    **informational only** and deliberately not enforced: a hard block would
+    eventually stop legitimate work and there is no override in this design.
     """
 
     __tablename__ = "manual_tests"
@@ -265,7 +240,7 @@ class ManualTest(Base, AirtableProtocolRef, ManualAttempt):
     id = Column(Integer, primary_key=True, index=True)
     project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
 
-    # "Forced Entry" | "ANSI Z97.1" - the Airtable `Test Type` spelling verbatim.
+    # "Forced Entry" | "ANSI Z97.1" — the Airtable `Test Type` spelling verbatim.
     type = Column(String, nullable=False, index=True)
 
     # The grade or class the section requires, e.g. "ASTM F588 Grade 40" or
@@ -273,30 +248,33 @@ class ManualTest(Base, AirtableProtocolRef, ManualAttempt):
     # LabOS does not invent an option set the requirement side does not have.
     required_option = Column(String, nullable=True)
 
-    # The operator's recorded outcome. Distinct from `test_result`, which is the
-    # reviewer's verdict - they are different people and different moments.
-    result = Column(Boolean, nullable=True)
+    # Same flag the rig tests carry: no further attempts once set.
+    #
+    # No `preset` counterpart. Static and cyclic use it to mark the rows
+    # auto-generated from the design pressures, which must not be deleted.
+    # Manual and impact tests are always created by an operator, so the flag
+    # would never be anything but False.
+    finished = Column(Boolean, nullable=False, default=False)
 
     project = relationship("Project", back_populates="manual_tests")
-    photos = relationship("TestPhoto", back_populates="manual_test",
+    trials = relationship("ManualTestResult", back_populates="manual_test",
                           cascade="all, delete-orphan")
 
 
 class TestPhoto(Base):
-    """Photographic evidence for a manual test.
+    """Photographic evidence, owned by the **attempt** that produced it.
 
-    Two nullable foreign keys rather than a polymorphic owner column: explicit
-    beats clever here, the set of owners is two and closed, and a real FK keeps
-    the database able to enforce it.
+    One owner, not one per test type: `test_results.id`. An earlier draft used a
+    nullable FK per type, which forced every reader to know which one was set.
+    The attempt is already the common parent of all five test types — that is
+    what `TestResult` is for — so a photograph hangs off it and inherits its
+    identity for free.
 
-    Enabled for all three manual types and required by none at the schema level.
-    A *failed* Forced Entry or ANSI is exactly when someone wants a photograph,
-    and evidence cannot be added once an attempt is reviewed. Impact's
-    requirement is enforced on the finish path, not here - see
-    `contract.REQUIRED_EVIDENCE_BY_TEST_TYPE`.
+    `shot_id` narrows it when the photograph shows one specific impact. NULL
+    means attempt-level, which is all Forced Entry and ANSI Z97.1 ever have.
 
-    Originals stay on the node under `uploads/`; Airtable receives a downscaled
-    preview through the attachment channel.
+    Originals stay on the node under `LABOS_UPLOADS_DIR`; Airtable receives a
+    downscaled preview through the attachment channel (write contract §6).
     """
 
     __tablename__ = "test_photos"
@@ -307,15 +285,10 @@ class TestPhoto(Base):
     note = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=True)
 
-    manual_test_id = Column(Integer, ForeignKey("manual_tests.id"), nullable=True)
-    missile_impact_test_id = Column(Integer, ForeignKey("missile_impact_tests.id"),
-                                    nullable=True)
-    # Set when the photograph shows one specific impact. NULL for an
-    # attempt-level photograph, which is all Forced Entry and ANSI ever have.
+    test_result_id = Column(Integer, ForeignKey("test_results.id"), nullable=False)
     shot_id = Column(Integer, ForeignKey("shots.id"), nullable=True)
 
-    manual_test = relationship("ManualTest", back_populates="photos")
-    missile_impact_test = relationship("MissileImpactTest", back_populates="photos")
+    test_result = relationship("TestResult", back_populates="photos")
     shot = relationship("Shot", back_populates="photos")
 
 
@@ -362,6 +335,8 @@ class TestResult(Base):
     note = Column(String, nullable=True)
     image_path = Column(String, nullable=True)
     deflections = relationship("Deflection", back_populates="test", cascade="all, delete-orphan")
+    photos = relationship("TestPhoto", back_populates="test_result",
+                          cascade="all, delete-orphan")
 
     # -- identity (contract §4.1) -------------------------------------------
     # The merge key. Airtable upserts on this, so it must be stable, unique and
@@ -393,7 +368,9 @@ class TestResult(Base):
     test_name = Column(String, nullable=True)
     test_result = Column(String, nullable=True)         # Pass | Fail | Inconclusive
     abort_reason = Column(String, nullable=True)
-    retest_required = Column(Boolean, nullable=False, server_default="false", default=False)
+    # Nullable, and that is the contract: NULL means no review has happened.
+    # A NOT NULL false would publish a decision nobody made (§6).
+    retest_required = Column(Boolean, nullable=True)
     testing_continued = Column(String, nullable=True)   # Continued | Stopped
     # Stamped when the attempt reaches a terminal state. Its presence IS the
     # lock: the sync worker refuses to re-write an attempt that has one, so
@@ -437,6 +414,14 @@ class TestResult(Base):
     test_rig = Column(String, nullable=True)            # System 1 | System 2
     labos_version = Column(String, nullable=True)
     result_rationale = Column(Text, nullable=True)
+
+    # -- the first review (contract §4, §6) ---------------------------------
+    # Written once, together with `test_result` and `retest_required`. Stored
+    # separately from `operator_name` even when the same person performs both,
+    # because the review is a distinct act — and `identity_assurance` is
+    # `declared`: LabOS has no user table, so these are names, not proof.
+    verdict_by = Column(String, nullable=True)
+    verdict_at = Column(DateTime(timezone=True), nullable=True)
     labos_created_at = Column(DateTime(timezone=True), nullable=True)
     labos_updated_at = Column(DateTime(timezone=True), nullable=True)
 
@@ -482,3 +467,38 @@ class StaticTestResult(TestResult):
     id = Column(Integer, ForeignKey('test_results.id'), primary_key=True, index=True)
     static_test_id = Column(Integer, ForeignKey('static_tests.id'))
     static_test = relationship("StaticTest", back_populates="trials")
+
+
+class ManualTestResult(TestResult):
+    """One attempt at a Forced Entry or ANSI Z97.1 test.
+
+    A joined-table subclass exactly like `StaticTestResult` and
+    `CyclicTestResult`, so it inherits the whole attempt record: `trial_number`
+    as Attempt Number, both UUIDs, the correction chain, the lifecycle and the
+    review columns. `app.airtable.mapping.envelope_values` therefore maps it to
+    Airtable with no new mapping code.
+    """
+
+    __tablename__ = "manual_test_results"
+    id = Column(Integer, ForeignKey('test_results.id'), primary_key=True, index=True)
+    manual_test_id = Column(Integer, ForeignKey('manual_tests.id'))
+    manual_test = relationship("ManualTest", back_populates="trials")
+
+    # The operator's recorded outcome, distinct from the reviewer's
+    # `test_result`. `TestResult.result` is the legacy boolean and means the
+    # same thing, so it is reused rather than duplicated.
+
+
+class ImpactTestResult(TestResult):
+    """One attempt at a missile impact test — a numbered sequence of impacts.
+
+    `shots` hang off the attempt, mirroring how `deflections` hang off a static
+    or cyclic trial. A re-test is a new attempt with its own impacts, which is
+    the whole reason the attempt level exists.
+    """
+
+    __tablename__ = "impact_test_results"
+    id = Column(Integer, ForeignKey('test_results.id'), primary_key=True, index=True)
+    missile_impact_test_id = Column(Integer, ForeignKey('missile_impact_tests.id'))
+    missile_impact_test = relationship("MissileImpactTest", back_populates="trials")
+    shots = relationship("Shot", back_populates="test_result")

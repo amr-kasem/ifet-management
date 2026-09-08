@@ -1630,6 +1630,7 @@
     "/projects/{project_id}/manual-tests/": {
       "post": {
         "summary": "Create Manual Test",
+        "description": "Create the test. Attempts are started separately, via `\u2026/trials`.",
         "operationId": "create_manual_test_projects__project_id__manual_tests__post",
         "parameters": [
           {
@@ -1733,11 +1734,130 @@
         }
       }
     },
-    "/manual-tests/{test_id}/finish": {
+    "/projects/{project_id}/manual-tests/{test_id}/trials": {
+      "post": {
+        "summary": "Start Manual Test Attempt",
+        "description": "Start an attempt \u2014 the operator pressing the button.",
+        "operationId": "start_manual_test_attempt_projects__project_id__manual_tests__test_id__trials_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "test_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Test Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AttemptStartSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttemptSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "List Manual Test Attempts",
+        "operationId": "list_manual_test_attempts_projects__project_id__manual_tests__test_id__trials_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "test_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Test Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AttemptSchema"
+                  },
+                  "title": "Response List Manual Test Attempts Projects  Project Id  Manual Tests  Test Id  Trials Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/manual-tests/{test_id}/finish": {
       "put": {
         "summary": "Finish Manual Test",
-        "operationId": "finish_manual_test_manual_tests__test_id__finish_put",
+        "description": "Mark the test itself complete, as `\u2026/static_tests/{idx}/finish` does.",
+        "operationId": "finish_manual_test_projects__project_id__manual_tests__test_id__finish_put",
         "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
           {
             "name": "test_id",
             "in": "path",
@@ -1748,16 +1868,6 @@
             }
           }
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ManualTestFinishSchema"
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -1765,104 +1875,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ManualTestSchema"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/manual-tests/{test_id}/verdict": {
-      "put": {
-        "summary": "Review Manual Test",
-        "operationId": "review_manual_test_manual_tests__test_id__verdict_put",
-        "parameters": [
-          {
-            "name": "test_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Test Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/VerdictSchema"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ManualTestSchema"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/manual-tests/{test_id}/photos": {
-      "post": {
-        "summary": "Add Manual Test Photo",
-        "operationId": "add_manual_test_photo_manual_tests__test_id__photos_post",
-        "parameters": [
-          {
-            "name": "test_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Test Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_add_manual_test_photo_manual_tests__test_id__photos_post"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PhotoSchema"
                 }
               }
             }
@@ -1883,6 +1895,7 @@
     "/projects/{project_id}/impact-tests/": {
       "post": {
         "summary": "Create Impact Test",
+        "description": "Create the test. Missile and weight are optional \u2014 the protocol fixes\nthem, so requiring them per test was retyping rather than data capture.",
         "operationId": "create_impact_test_projects__project_id__impact_tests__post",
         "parameters": [
           {
@@ -1970,12 +1983,20 @@
         }
       }
     },
-    "/impact-tests/{test_id}/shots": {
+    "/projects/{project_id}/impact-tests/{test_id}/trials": {
       "post": {
-        "summary": "Record Shot",
-        "description": "Record one impact \u2014 numbered, with its outcome.\n\nAn impact test is a sequence: impact 1, impact 2, impact 3. The number is\nallocated here rather than accepted from the client, because a client that\nchose its own could number two impacts the same or renumber a sequence\nsomeone has already photographed.\n\nThe business shape is \"how many impacts and whether each passed\". Area and\nvelocity are optional because the protocol fixes them; requiring them per\nimpact was retyping, not data capture. Photographs attach afterwards, per\nimpact, via `POST /shots/{shot_id}/photos`.",
-        "operationId": "record_shot_impact_tests__test_id__shots_post",
+        "summary": "Start Impact Test Attempt",
+        "operationId": "start_impact_test_attempt_projects__project_id__impact_tests__test_id__trials_post",
         "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
           {
             "name": "test_id",
             "in": "path",
@@ -1983,6 +2004,305 @@
             "schema": {
               "type": "integer",
               "title": "Test Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AttemptStartSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttemptSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "List Impact Test Attempts",
+        "operationId": "list_impact_test_attempts_projects__project_id__impact_tests__test_id__trials_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "test_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Test Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AttemptSchema"
+                  },
+                  "title": "Response List Impact Test Attempts Projects  Project Id  Impact Tests  Test Id  Trials Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/impact-tests/{test_id}/finish": {
+      "put": {
+        "summary": "Finish Impact Test",
+        "description": "Mark the test itself complete, as the rig tests' `/finish` does.",
+        "operationId": "finish_impact_test_projects__project_id__impact_tests__test_id__finish_put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "test_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Test Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImpactTestSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/test-results/{test_result_id}/finish": {
+      "put": {
+        "summary": "Finish Attempt",
+        "description": "Terminate an attempt. Explicit completion, or an abort with a reason.\n\nNever inferred from a timeout or a disconnect: missing telemetry is not a\npass. `test_result` stays `Pending` \u2014 the verdict is a separate act.",
+        "operationId": "finish_attempt_test_results__test_result_id__finish_put",
+        "parameters": [
+          {
+            "name": "test_result_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Test Result Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AttemptFinishSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttemptSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/test-results/{test_result_id}/verdict": {
+      "put": {
+        "summary": "Review Attempt",
+        "description": "The first review. Once, by someone with a name.\n\nRefused before termination: \u00a74 freezes evidence on termination and reviews\nit afterwards. Refused twice: the first verdict stands, and a change is a\ncorrection \u2014 a new attempt naming this one \u2014 never an edit of it.",
+        "operationId": "review_attempt_test_results__test_result_id__verdict_put",
+        "parameters": [
+          {
+            "name": "test_result_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Test Result Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerdictSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttemptSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/test-results/{test_result_id}/photos": {
+      "post": {
+        "summary": "Add Attempt Photo",
+        "description": "Attempt-level evidence \u2014 the specimen before testing, the setup.",
+        "operationId": "add_attempt_photo_test_results__test_result_id__photos_post",
+        "parameters": [
+          {
+            "name": "test_result_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Test Result Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_add_attempt_photo_test_results__test_result_id__photos_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PhotoSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/test-results/{test_result_id}/shots": {
+      "post": {
+        "summary": "Record Shot",
+        "description": "Record one impact \u2014 numbered, with its outcome.\n\nAn impact test is a sequence: impact 1, 2, 3. `shot_number` is allocated\nhere rather than accepted from the client, because a client that chose its\nown could number two impacts the same or renumber a sequence someone has\nalready photographed.",
+        "operationId": "record_shot_test_results__test_result_id__shots_post",
+        "parameters": [
+          {
+            "name": "test_result_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Test Result Id"
             }
           }
         ],
@@ -2022,15 +2342,15 @@
       "get": {
         "summary": "List Shots",
         "description": "The impacts in order, each with its value and its photographs.",
-        "operationId": "list_shots_impact_tests__test_id__shots_get",
+        "operationId": "list_shots_test_results__test_result_id__shots_get",
         "parameters": [
           {
-            "name": "test_id",
+            "name": "test_result_id",
             "in": "path",
             "required": true,
             "schema": {
               "type": "integer",
-              "title": "Test Id"
+              "title": "Test Result Id"
             }
           }
         ],
@@ -2044,7 +2364,7 @@
                   "items": {
                     "$ref": "#/components/schemas/ShotDetailSchema"
                   },
-                  "title": "Response List Shots Impact Tests  Test Id  Shots Get"
+                  "title": "Response List Shots Test Results  Test Result Id  Shots Get"
                 }
               }
             }
@@ -2065,7 +2385,7 @@
     "/shots/{shot_id}/photos": {
       "post": {
         "summary": "Add Shot Photo",
-        "description": "Attach a photograph to one specific impact.\n\nDistinct from the attempt-level route: \"impact 3 cracked the corner\" needs\nthe photograph tied to impact 3, not to the attempt. An attempt-level\nphotograph is still available via `/impact-tests/{id}/photos` and is what\nForced Entry and ANSI Z97.1 use.",
+        "description": "Attach a photograph to one specific impact.\n\n\"Impact 3 cracked the corner\" needs the photograph tied to impact 3. A\nper-impact photograph also counts as attempt evidence, so photographing each\nimpact satisfies the finish requirement without a separate upload.",
         "operationId": "add_shot_photo_shots__shot_id__photos_post",
         "parameters": [
           {
@@ -2111,163 +2431,22 @@
           }
         }
       }
-    },
-    "/impact-tests/{test_id}/finish": {
-      "put": {
-        "summary": "Finish Impact Test",
-        "operationId": "finish_impact_test_impact_tests__test_id__finish_put",
-        "parameters": [
-          {
-            "name": "test_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Test Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ManualTestFinishSchema"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ImpactTestSchema"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/impact-tests/{test_id}/verdict": {
-      "put": {
-        "summary": "Review Impact Test",
-        "operationId": "review_impact_test_impact_tests__test_id__verdict_put",
-        "parameters": [
-          {
-            "name": "test_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Test Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/VerdictSchema"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ImpactTestSchema"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/impact-tests/{test_id}/photos": {
-      "post": {
-        "summary": "Add Impact Photo",
-        "operationId": "add_impact_photo_impact_tests__test_id__photos_post",
-        "parameters": [
-          {
-            "name": "test_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Test Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "$ref": "#/components/schemas/Body_add_impact_photo_impact_tests__test_id__photos_post"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PhotoSchema"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
     }
   },
   "components": {
     "schemas": {
-      "Body_add_impact_photo_impact_tests__test_id__photos_post": {
+      "AttemptFinishSchema": {
         "properties": {
-          "file": {
-            "type": "string",
-            "contentMediaType": "application/octet-stream",
-            "title": "File"
+          "result": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
           },
           "note": {
             "anyOf": [
@@ -2279,15 +2458,270 @@
               }
             ],
             "title": "Note"
+          },
+          "testing_continued": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Testing Continued"
+          },
+          "abort_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Abort Reason"
           }
         },
         "type": "object",
-        "required": [
-          "file"
-        ],
-        "title": "Body_add_impact_photo_impact_tests__test_id__photos_post"
+        "title": "AttemptFinishSchema",
+        "description": "Terminate. Explicit completion, or an abort with a reason \u2014 never inferred.\n\n`result` is the **operator's** recorded outcome, and is required to complete\na Forced Entry or ANSI attempt. It is not the verdict: the verdict is a\nseparate act by a named reviewer (write contract \u00a74)."
       },
-      "Body_add_manual_test_photo_manual_tests__test_id__photos_post": {
+      "AttemptSchema": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "trial_number": {
+            "type": "integer",
+            "title": "Trial Number"
+          },
+          "labos_attempt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Labos Attempt Id"
+          },
+          "labos_test_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Labos Test Id"
+          },
+          "test_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Test Type"
+          },
+          "test_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Test Name"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "test_result": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Test Result"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "abort_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Abort Reason"
+          },
+          "operator_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operator Name"
+          },
+          "verdict_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict By"
+          },
+          "verdict_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict At"
+          },
+          "retest_required": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retest Required"
+          },
+          "result_rationale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Rationale"
+          },
+          "testing_start_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Testing Start Date"
+          },
+          "testing_end_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Testing End Date"
+          },
+          "testing_continued": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Testing Continued"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "photos": {
+            "items": {
+              "$ref": "#/components/schemas/PhotoSchema"
+            },
+            "type": "array",
+            "title": "Photos",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "trial_number"
+        ],
+        "title": "AttemptSchema",
+        "description": "One attempt at any test type \u2014 the serialised `TestResult`."
+      },
+      "AttemptStartSchema": {
+        "properties": {
+          "operator_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operator Name"
+          }
+        },
+        "type": "object",
+        "title": "AttemptStartSchema",
+        "description": "Begin an attempt. Identity and the attempt number are server-side."
+      },
+      "Body_add_attempt_photo_test_results__test_result_id__photos_post": {
         "properties": {
           "file": {
             "type": "string",
@@ -2310,7 +2744,7 @@
         "required": [
           "file"
         ],
-        "title": "Body_add_manual_test_photo_manual_tests__test_id__photos_post"
+        "title": "Body_add_attempt_photo_test_results__test_result_id__photos_post"
       },
       "Body_add_shot_photo_shots__shot_id__photos_post": {
         "properties": {
@@ -2748,17 +3182,6 @@
             ],
             "title": "Missile Weight"
           },
-          "operator_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Operator Name"
-          },
           "airtable_protocol_id": {
             "anyOf": [
               {
@@ -2795,7 +3218,7 @@
         },
         "type": "object",
         "title": "ImpactTestCreateSchema",
-        "description": "Start a missile impact attempt.\n\nMissile and weight are optional: the protocol normally fixes them, and\nrequiring them per attempt was retyping rather than data capture. When the\njob came from Airtable they are pre-filled from `Missile Type` and\n`Missile Weight`."
+        "description": "Create a missile impact test.\n\nMissile and weight are optional: the protocol normally fixes them, and\nrequiring them was retyping rather than data capture. Pre-filled from\n`Missile Type` and `Missile Weight` when the job came from Airtable."
       },
       "ImpactTestSchema": {
         "properties": {
@@ -2829,123 +3252,9 @@
             ],
             "title": "Missile Weight"
           },
-          "labos_attempt_id": {
-            "type": "string",
-            "title": "Labos Attempt Id"
-          },
-          "attempt_number": {
-            "type": "integer",
-            "title": "Attempt Number"
-          },
-          "status": {
-            "type": "string",
-            "title": "Status"
-          },
-          "test_result": {
-            "type": "string",
-            "title": "Test Result"
-          },
-          "abort_reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Abort Reason"
-          },
-          "operator_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Operator Name"
-          },
-          "verdict_by": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Verdict By"
-          },
-          "verdict_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Verdict At"
-          },
-          "retest_required": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Retest Required"
-          },
-          "testing_start_date": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Testing Start Date"
-          },
-          "testing_end_date": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Testing End Date"
-          },
-          "testing_continued": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Testing Continued"
-          },
-          "note": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Note"
+          "finished": {
+            "type": "boolean",
+            "title": "Finished"
           },
           "airtable_protocol_id": {
             "anyOf": [
@@ -2980,20 +3289,12 @@
             ],
             "title": "Airtable Section Name"
           },
-          "shots": {
+          "trials": {
             "items": {
-              "$ref": "#/components/schemas/ShotDetailSchema"
+              "$ref": "#/components/schemas/AttemptSchema"
             },
             "type": "array",
-            "title": "Shots",
-            "default": []
-          },
-          "photos": {
-            "items": {
-              "$ref": "#/components/schemas/PhotoSchema"
-            },
-            "type": "array",
-            "title": "Photos",
+            "title": "Trials",
             "default": []
           }
         },
@@ -3001,10 +3302,7 @@
         "required": [
           "id",
           "project_id",
-          "labos_attempt_id",
-          "attempt_number",
-          "status",
-          "test_result"
+          "finished"
         ],
         "title": "ImpactTestSchema"
       },
@@ -3062,17 +3360,6 @@
             ],
             "title": "Required Option"
           },
-          "operator_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Operator Name"
-          },
           "airtable_protocol_id": {
             "anyOf": [
               {
@@ -3112,58 +3399,7 @@
           "type"
         ],
         "title": "ManualTestCreateSchema",
-        "description": "Start a Forced Entry or ANSI Z97.1 attempt.\n\n`attempt_number`, `labos_attempt_id` and `status` are allocated\nserver-side - a client that could choose its own attempt number could\nsilently overwrite an earlier one."
-      },
-      "ManualTestFinishSchema": {
-        "properties": {
-          "result": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Result"
-          },
-          "note": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Note"
-          },
-          "testing_continued": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Testing Continued"
-          },
-          "abort_reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Abort Reason"
-          }
-        },
-        "type": "object",
-        "title": "ManualTestFinishSchema",
-        "description": "Terminate. Explicit completion, or an abort with a reason - never inferred.\n\n`result` is the operator's recorded outcome. It is not the verdict: the\nverdict is a separate act by a named reviewer (write contract \u00a74)."
+        "description": "Create a Forced Entry or ANSI Z97.1 test. Attempts start separately."
       },
       "ManualTestSchema": {
         "properties": {
@@ -3190,134 +3426,9 @@
             ],
             "title": "Required Option"
           },
-          "result": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Result"
-          },
-          "labos_attempt_id": {
-            "type": "string",
-            "title": "Labos Attempt Id"
-          },
-          "attempt_number": {
-            "type": "integer",
-            "title": "Attempt Number"
-          },
-          "status": {
-            "type": "string",
-            "title": "Status"
-          },
-          "test_result": {
-            "type": "string",
-            "title": "Test Result"
-          },
-          "abort_reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Abort Reason"
-          },
-          "operator_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Operator Name"
-          },
-          "verdict_by": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Verdict By"
-          },
-          "verdict_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Verdict At"
-          },
-          "retest_required": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Retest Required"
-          },
-          "testing_start_date": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Testing Start Date"
-          },
-          "testing_end_date": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Testing End Date"
-          },
-          "testing_continued": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Testing Continued"
-          },
-          "note": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Note"
+          "finished": {
+            "type": "boolean",
+            "title": "Finished"
           },
           "airtable_protocol_id": {
             "anyOf": [
@@ -3352,12 +3463,12 @@
             ],
             "title": "Airtable Section Name"
           },
-          "photos": {
+          "trials": {
             "items": {
-              "$ref": "#/components/schemas/PhotoSchema"
+              "$ref": "#/components/schemas/AttemptSchema"
             },
             "type": "array",
-            "title": "Photos",
+            "title": "Trials",
             "default": []
           }
         },
@@ -3366,10 +3477,7 @@
           "id",
           "project_id",
           "type",
-          "labos_attempt_id",
-          "attempt_number",
-          "status",
-          "test_result"
+          "finished"
         ],
         "title": "ManualTestSchema"
       },
@@ -3621,6 +3729,18 @@
       },
       "ShotDetailSchema": {
         "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "shot_number": {
+            "type": "integer",
+            "title": "Shot Number"
+          },
+          "result": {
+            "type": "boolean",
+            "title": "Result"
+          },
           "area": {
             "anyOf": [
               {
@@ -3643,10 +3763,6 @@
             ],
             "title": "Velocity"
           },
-          "result": {
-            "type": "boolean",
-            "title": "Result"
-          },
           "note": {
             "anyOf": [
               {
@@ -3657,21 +3773,6 @@
               }
             ],
             "title": "Note"
-          },
-          "id": {
-            "type": "integer",
-            "title": "Id"
-          },
-          "shot_number": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Shot Number"
           },
           "photos": {
             "items": {
@@ -3684,8 +3785,9 @@
         },
         "type": "object",
         "required": [
-          "result",
-          "id"
+          "id",
+          "shot_number",
+          "result"
         ],
         "title": "ShotDetailSchema",
         "description": "A recorded impact with its own photographs."
@@ -3735,7 +3837,7 @@
           "result"
         ],
         "title": "ShotRecordSchema",
-        "description": "One impact. Pass or fail is the whole requirement; the rest is optional.\n\n`result` has no default on purpose. A shot without an outcome is not a shot,\nand a default of False would silently record a failure nobody observed.\n\n`shot_number` is **not** accepted: it is allocated server-side in the order\nimpacts are recorded. A client that chose its own could number two impacts\nthe same, or renumber a sequence someone has already photographed."
+        "description": "One impact. Pass or fail is the whole requirement; the rest is optional.\n\n`result` has no default on purpose. An impact without an outcome is not an\nimpact, and a default of False would record a failure nobody observed.\n\n`shot_number` is **not** accepted: it is allocated server-side in the order\nimpacts are recorded. A client that chose its own could number two the same,\nor renumber a sequence someone has already photographed."
       },
       "ShotSchema": {
         "properties": {
