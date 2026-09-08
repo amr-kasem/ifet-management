@@ -31,6 +31,9 @@ So this reconciles the register against four things we actually have:
    `evidence/business-io-reconciliation-*/reconciliation.csv`, which traces where
    each value lives and drifts the same way — four of its rows still said
    `mirror.*` and one said `test_results.rationale` for `result_rationale`.
+6. **The project owner's approval document is current.** It is generated from the
+   code by `test_requirements_doc.py`, and it is going out for a signature — so a
+   stale copy on disk is the one drift that must not be possible.
 
 Read-only, stdlib only, touches no base and opens no socket: it parses the source
 with `ast` rather than importing it, so it runs anywhere a checkout does — no
@@ -39,6 +42,7 @@ virtualenv, no SQLAlchemy, no database.
 
 import ast
 import csv
+import importlib.util
 import json
 import pathlib
 import re
@@ -288,7 +292,21 @@ def main(argv=None):
                         traced += 1
         print(f"   {path.parent.name}: {traced} traces resolved")
 
-    print(f"\n{'PASS — both documents match what we built' if not fails else f'{len(fails)} MISMATCHES'}")
+    # -- 7. the approval document is current ------------------------------
+    print("\n7. The project owner's approval document is current")
+    gen = HERE.parent / "test_requirements_doc.py"
+    spec = importlib.util.spec_from_file_location("_trd", gen)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    if not module.OUT.exists():
+        fail(7, f"{module.OUT.name} has not been generated yet")
+    elif module.OUT.read_text() != module.build():
+        fail(7, f"{module.OUT.name} is stale — regenerate with "
+                f"python3 app/airtable/{gen.name}")
+    else:
+        print(f"   {module.OUT.name} matches the code it is generated from")
+
+    print(f"\n{'PASS — the documents match what we built' if not fails else f'{len(fails)} MISMATCHES'}")
     return 1 if fails else 0
 
 
