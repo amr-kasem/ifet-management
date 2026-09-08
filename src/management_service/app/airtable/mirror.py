@@ -42,7 +42,17 @@ PROJECT_FIELDS = {
 
 SPECIMEN_FIELDS = {
     "Mock-up/specimen name": "specimen_name",
-    "Project Name": "project_record_id",     # a link field: [recId]
+    # **`IFET Job Number`, not `Project Name`.** The field register's IN row for
+    # Mock-Ups/Specimens names `Project Name`, and that is not the link to
+    # `IFET Projects` — it is a lookup of the job number's *text*. Read against
+    # the live base on 2026-09-08: the record's link field is `IFET Job Number`
+    # and carries `['reclD9DwtosvMGSI3']`.
+    #
+    # The register is a view, and the prose contract says the prose wins on
+    # disagreement; here the *base* wins over both. Worth stating because a
+    # register row that names a plausible neighbouring field is the kind of
+    # error that survives review — the import simply found no specimens.
+    "IFET Job Number": "project_record_id",  # a link field: [recId]
 }
 
 PROTOCOL_FIELDS = {
