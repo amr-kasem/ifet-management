@@ -133,6 +133,12 @@ def record_phase(session, attempt, phase):
         # recoverable once the defect is fixed and the phase re-queued.
         return _refuse(session, attempt, phase, exc, values=values)
 
+    # `enqueue` allocates `max(attempt_seq)+1` for this attempt, so a phase
+    # re-queued by repair lands **after** everything already queued or
+    # delivered. Ordering is preserved by construction: a repaired terminal
+    # cannot overtake its own create, and a repaired create for an attempt whose
+    # terminal already landed is caught by `is_superseded` rather than
+    # overwriting it.
     entry = outbox.enqueue(session, attempt.labos_attempt_id, phase, payload,
                            payload_updated_at=attempt.labos_updated_at)
     # Queued successfully, so any recorded failure for this phase is repaired.

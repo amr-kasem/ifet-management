@@ -6,7 +6,7 @@ from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import sessionmaker, Session
 from app.data.models import *
-from app.data.schema import *
+from app.data.schema import *  # RunStartSchema included
 from app.data import attempts
 # The transactional-outbox seam. Persistence and payload only — it cannot
 # open a socket, which `tests/test_report_api_isolation.py` enforces.
@@ -446,7 +446,10 @@ def create_static_test_trial(project_id: int, static_test_index: int, trial_data
     # The rig posted a finished stage, so terminate it in the same call when the
     # post carried an operator. Without one the attempt stays In Progress and
     # the refusal is recorded rather than silent — see `complete_rig_trial`.
-    if attempts.complete_rig_trial(new_trial, trial_data):
+    if attempts.complete_rig_trial(new_trial, trial_data,
+                                   test_operator=static_test.operator_name):
+        # Cycles only: snapshot the rig-reported count before `finish` zeroes it.
+        attempts.capture_cycles_completed(new_trial, static_test)
         db.flush()
         publish.record_phase(db, new_trial, publish.TERMINAL)
     db.commit()
@@ -645,7 +648,10 @@ def create_cyclic_test_trial(project_id: int, cyclic_test_index: int, trial_data
     # The rig posted a finished stage, so terminate it in the same call when the
     # post carried an operator. Without one the attempt stays In Progress and
     # the refusal is recorded rather than silent — see `complete_rig_trial`.
-    if attempts.complete_rig_trial(new_trial, trial_data):
+    if attempts.complete_rig_trial(new_trial, trial_data,
+                                   test_operator=cyclic_test.operator_name):
+        # Cycles only: snapshot the rig-reported count before `finish` zeroes it.
+        attempts.capture_cycles_completed(new_trial, cyclic_test)
         db.flush()
         publish.record_phase(db, new_trial, publish.TERMINAL)
     db.commit()
@@ -676,8 +682,38 @@ def get_next_cyclic_test(project_id: int, db: Session = Depends(get_db)):
     return HTTPException(status_code=404, detail="No Test Available")
 
 
+@app.put("/projects/{project_id}/static_tests/{static_test_index}/start",
+         response_model=StaticTestSchema)
+def start_static_test(project_id: int, static_test_index: int,
+                      body: RunStartSchema = None,
+                      db: Session = Depends(get_db)):
+    """Declare who is running this static test, before any hardware moves.
+
+    Static had no start route at all, so there was nowhere to capture the
+    operator — and the rig callback carries only `deflections`. That absence,
+    not the firmware, is why rig attempts could not be completed. See
+    `a3d8e5c71f04`.
+
+    Optional body, so an existing caller that starts a run without declaring an
+    operator still works; the attempt is then completable only if the trial
+    callback carries one.
+    """
+    test = db.query(StaticTest).filter(
+        StaticTest.index == static_test_index,
+        StaticTest.project_id == project_id).first()
+    if not test:
+        raise HTTPException(status_code=404, detail="Static test not found")
+    if body and body.operator_name:
+        test.operator_name = body.operator_name
+    db.commit()
+    db.refresh(test)
+    return test
+
+
 @app.put("/projects/{project_id}/cyclic_tests/{cyclic_test_index}/start", response_model=CyclicTestSchema)
-def start_cyclic_test(project_id: int, cyclic_test_index: int, db: Session = Depends(get_db)):
+def start_cyclic_test(project_id: int, cyclic_test_index: int,
+                      body: RunStartSchema = None,
+                      db: Session = Depends(get_db)):
     db_project = db.query(Project).filter(Project.id == project_id).first()
     if not db_project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -691,6 +727,9 @@ def start_cyclic_test(project_id: int, cyclic_test_index: int, db: Session = Dep
     if any(not test.finished for test in previous_tests):
         raise HTTPException(status_code=400, detail="Previous cyclic tests are not finished")
     if cyclic_test.finished : raise HTTPException(status_code=400, detail="Already finished")
+    # Declared at run start, before hardware moves — see `a3d8e5c71f04`.
+    if body and body.operator_name:
+        cyclic_test.operator_name = body.operator_name
     cyclic_test.resume = True
     db.commit()
     db.refresh(cyclic_test)
@@ -1317,6 +1356,35 @@ def _start_attempt(db, cls, test, test_type, operator_name, **link):
         raise HTTPException(
             status_code=400,
             detail="This test is finished. Reopen it or create a new one to test again.")
+
+    # **A duplicate Start is not a second physical attempt.** One test runs once
+    # at a time, so if this test already has an open attempt, that attempt IS
+    # this request's answer — returning it makes Start idempotent. Allocating
+    # the next number instead would turn an operator's double-click into two
+    # certification records for one physical test, and Airtable would show them
+    # as attempts 1 and 2.
+    #
+    # An intentional retest still gets the next number: it requires the previous
+    # attempt to be terminal, which is what `PUT /finish` stamps.
+    existing = attempts.open_attempt_for(db, cls, list(link)[0], test.id)
+    if existing is not None:
+        return existing
+
+    # One active physical run per rig — a hardware fact, not a policy. Refused
+    # rather than serialised, because a second concurrent run cannot correspond
+    # to anything that is actually happening.
+    device_id = getattr(getattr(test, "project", None), "device_id", None)
+    if device_id is not None:
+        busy = attempts.rig_is_busy(db, device_id,
+                                    exclude_test=(test.__tablename__, test.id))
+        if busy is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"This rig is already running attempt "
+                       f"{busy.trial_number} of another test "
+                       f"({busy.test_type}). One rig runs one test at a time; "
+                       "finish or abort that attempt first.")
+
     test_id = attempts.test_id_for_test(_kind_of(test), test.id)
 
     def build():
@@ -1672,11 +1740,12 @@ def sync_failures(db: Session = Depends(get_db)):
     entry. Until they were persisted, the headline status read `Synced` for an
     attempt that had never been published, and there was nothing to retry.
 
-    `recoverable` distinguishes the two kinds. A payload our own envelope
-    rejected is recoverable — fix the defect, repair the phase. An attempt whose
-    Airtable linkage is incomplete is **not**: no retry helps until someone
-    binds the protocol and section, and saying otherwise would send an operator
-    round a loop.
+    `recoverable` records why it was refused *at the time*, and is advisory: a
+    payload our own envelope rejected needs the defect fixed; an incomplete
+    Airtable binding needs someone to bind the protocol and section. Neither is
+    permanent, and repair re-checks rather than trusting the flag — so a result
+    whose job was bound later is still publishable, with its measurements and
+    evidence intact.
     """
     rows = outbox_mod.open_publication_failures(db)
     return {
@@ -1713,12 +1782,17 @@ def sync_repair(failure_id: int, db: Session = Depends(get_db)):
     if row.resolved_at is not None:
         raise HTTPException(status_code=400,
                             detail="This failure is already resolved.")
-    if not row.recoverable:
-        raise HTTPException(
-            status_code=409,
-            detail=f"This failure is not repairable by retry: {row.error} "
-                   "Bind the Airtable records for this job, then repair.")
-
+    # **`recoverable` is advisory, not a verdict.** It says why the payload was
+    # refused when it was refused; it must not decide whether repair may be
+    # attempted now. An incomplete Airtable binding is the case that matters: it
+    # is genuinely unfixable by retry *at the time*, and becomes fixable the
+    # moment someone binds the protocol and section. Refusing on the stored flag
+    # would strand that result permanently — the attempt would keep its
+    # measurements and its evidence and never be publishable.
+    #
+    # So repair always re-derives the payload against the data as it stands now.
+    # If the binding has since been completed it succeeds; if not, it 409s with
+    # the current reason, and `_refuse` has updated the row with it.
     attempt = (db.query(TestResult)
                .filter(TestResult.labos_attempt_id == row.attempt_id).first())
     if not attempt:
@@ -1729,10 +1803,13 @@ def sync_repair(failure_id: int, db: Session = Depends(get_db)):
     db.commit()
     if entry is None:
         db.refresh(row)
+        hint = ("" if row.recoverable else
+                " Bind this job's Airtable protocol and section records, then "
+                "repair again — the result and its evidence are kept meanwhile.")
         raise HTTPException(
             status_code=409,
             detail=f"Still refused: {row.error} The payload has not been "
-                   "repaired, so nothing was queued.")
+                   f"repaired, so nothing was queued.{hint}")
     return {"failure_id": failure_id, "queued_phase": row.phase,
             "attempt_id": row.attempt_id, "resolved": True}
 

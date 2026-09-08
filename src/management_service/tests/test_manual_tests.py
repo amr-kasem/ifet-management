@@ -78,6 +78,17 @@ class _Base(unittest.TestCase):
     def tearDown(self):
         from app import main
         main.app.dependency_overrides.clear()
+    def _finish(self, attempt_id, result=True):
+        """Terminate an attempt. **Required before a retest**, since 2026-09-08.
+
+        A duplicate Start returns the open attempt rather than creating a second
+        one — one test runs once at a time, so an operator's double-click must
+        not become two certification records. An intentional retest therefore
+        terminates the previous attempt first, which is the real workflow.
+        """
+        return self.client.put(
+            f"/test-results/{attempt_id}/finish",
+            json={"result": result, "testing_continued": "Stopped"})
 
     # -- helpers -----------------------------------------------------------
 
@@ -126,6 +137,9 @@ class TwoLevels(_Base):
         """'Attempt 2 of the same test' - inexpressible with one flat row."""
         t = self._test()
         a1 = self.start("/projects/1/manual-tests", t["id"])
+        # Terminate before retesting. A Start while attempt 1 is open returns
+        # attempt 1 — see `_finish`.
+        self._finish(a1["id"], result=False)
         a2 = self.start("/projects/1/manual-tests", t["id"])
         self.assertEqual((a1["trial_number"], a2["trial_number"]), (1, 2))
         self.assertEqual(a1["labos_test_id"], a2["labos_test_id"])
@@ -133,7 +147,8 @@ class TwoLevels(_Base):
 
     def test_attempts_are_listed_under_their_test(self):
         t = self._test()
-        self.start("/projects/1/manual-tests", t["id"])
+        first = self.start("/projects/1/manual-tests", t["id"])
+        self._finish(first["id"], result=False)
         self.start("/projects/1/manual-tests", t["id"])
         listed = self.client.get(f"/projects/1/manual-tests/{t['id']}/trials").json()
         self.assertEqual([a["trial_number"] for a in listed], [1, 2])
@@ -369,7 +384,12 @@ class Impact(_Base):
         self.assertEqual(self.shot(shot_number=7).json()["shot_number"], 1)
 
     def test_numbering_restarts_per_attempt(self):
-        first = self.shot().json()["shot_number"]
+        first_shot = self.shot()
+        first = first_shot.json()["shot_number"]
+        # An impact attempt needs an impact and a photograph to finish, both of
+        # which it now has, so terminate it before starting attempt 2.
+        self.client.post(f"/shots/{first_shot.json()['id']}/photos", files=_jpeg())
+        self._finish(self.attempt["id"], result=False)
         second_attempt = self.start("/projects/1/impact-tests", self.test_id)
         r = self.client.post(f"/test-results/{second_attempt['id']}/shots",
                              json={"result": True})
@@ -497,6 +517,14 @@ class Impact(_Base):
         self.assertIn("finished", again.text)
 
     def test_only_an_impact_attempt_records_impacts(self):
+        # The impact attempt from setUp is still open, and one rig runs one test
+        # at a time — so starting a second test on the same rig is refused. That
+        # is the rule under test elsewhere; here, terminate first so this test
+        # is about shots on a non-impact attempt and nothing else.
+        first_shot = self.shot()
+        self.client.post(f"/shots/{first_shot.json()['id']}/photos", files=_jpeg())
+        self._finish(self.attempt["id"], result=True)
+
         mt = self.client.post("/projects/1/manual-tests/",
                               json={"type": "ANSI Z97.1"}).json()
         other = self.start("/projects/1/manual-tests", mt["id"])

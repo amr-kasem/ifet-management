@@ -245,7 +245,7 @@ def next_attempt_number(session, labos_test_id):
             .scalar()) + 1
 
 
-def complete_rig_trial(attempt, body, now=None):
+def complete_rig_trial(attempt, body, now=None, test_operator=None):
     """Terminate a rig-posted stage, if the post carried enough to terminate.
 
     **Why this exists.** Static and cyclic post a *finished* stage in one call,
@@ -256,16 +256,20 @@ def complete_rig_trial(attempt, body, now=None):
     false of the lifecycle.
 
     Returns True when the attempt was terminated. Returns False, leaving it
-    `In Progress`, when the post carried no `operator_name` — contract §4.5
-    requires an operator on a terminal write and **LabOS does not invent one**.
-    Production firmware sends `deflections` alone today, so False is the current
-    reality for a real rig, and it now surfaces as a recorded publication
-    failure rather than silence.
+    `In Progress`, only when **no operator is known from either source** — the
+    callback or the run start. Contract §4.5 requires an operator on a terminal
+    write and LabOS does not invent one; that refusal surfaces in
+    `GET /sync/failures` rather than as silence.
     """
-    if not getattr(body, "operator_name", None):
+    # The callback's operator if it sent one, otherwise the one declared at run
+    # start. The second is the normal case for a real rig: firmware sends
+    # `deflections` alone and does not need to change, because the operator is
+    # not a fact the rig has — see `a3d8e5c71f04`.
+    operator = getattr(body, "operator_name", None) or test_operator
+    if not operator:
         return False
     now = now or _now()
-    attempt.operator_name = body.operator_name
+    attempt.operator_name = operator
     attempt.status = COMPLETED
     attempt.result = body.result if body.result is not None else attempt.result
     attempt.testing_continued = (body.testing_continued
@@ -275,3 +279,78 @@ def complete_rig_trial(attempt, body, now=None):
     attempt.terminal_at = now
     attempt.labos_updated_at = now
     return True
+
+
+def open_attempt_for(session, cls, fk_name, test_id):
+    """The In Progress attempt at this test, or None. At most one can exist.
+
+    An attempt is open until `terminal_at` is stamped. Keyed on the parent test,
+    because "is this test already running" is the question a duplicate Start
+    asks.
+    """
+    from .models import TestResult
+    return (session.query(cls)
+            .filter(getattr(cls, fk_name) == test_id,
+                    TestResult.terminal_at.is_(None))
+            .order_by(cls.id.desc())
+            .first())
+
+
+def rig_is_busy(session, device_id, exclude_test=None):
+    """Another test is mid-run on this rig. Returns the offending attempt or None.
+
+    **One active physical run per rig is a hardware fact, not a policy.** One rig
+    holds one specimen and runs one test at a time (plan §4.3). So an attempt
+    starting on a rig that already has an open attempt at a *different* test is
+    not a concurrency case to be serialised — it is a request that cannot
+    correspond to anything physical, and refusing it is the only honest answer.
+    """
+    from .models import (CyclicTestResult, ImpactTestResult, ManualTestResult,
+                         Project, StaticTestResult, TestResult)
+    from .models import CyclicTest, ManualTest, MissileImpactTest, StaticTest
+
+    pairs = ((StaticTestResult, "static_test_id", StaticTest),
+             (CyclicTestResult, "cyclic_test_id", CyclicTest),
+             (ManualTestResult, "manual_test_id", ManualTest),
+             (ImpactTestResult, "missile_impact_test_id", MissileImpactTest))
+    for cls, fk, parent in pairs:
+        q = (session.query(cls)
+             .join(parent, getattr(cls, fk) == parent.id)
+             .join(Project, parent.project_id == Project.id)
+             .filter(Project.device_id == device_id,
+                     TestResult.terminal_at.is_(None)))
+        if exclude_test is not None:
+            same_table = parent.__tablename__ == exclude_test[0]
+            if same_table:
+                q = q.filter(getattr(cls, fk) != exclude_test[1])
+        found = q.first()
+        if found is not None:
+            return found
+    return None
+
+
+def capture_cycles_completed(attempt, test, now=None):
+    """Snapshot the rig-reported cycle count onto the attempt, at termination.
+
+    **Where the number comes from, exactly.** `cyclic_tests.cycles` is the
+    configured *target* and is never published as an achievement.
+    `cyclic_tests.current_cycle` is progress the **rig reports during the run**,
+    through `PUT .../update_status` (`main.py`: `cyclic_test.current_cycle =
+    data.current_cycle`). That is confirmed execution evidence, and it is the
+    source.
+
+    **Why it is snapshotted and not read at publish time.** `current_cycle` lives
+    on the *test*, and two routes zero it — `reset`, and `finish` itself. So by
+    the time a payload is built the evidence may already be gone, and a second
+    run at the same test would overwrite the first attempt's count with its own.
+    Reading it live was the first fix and it was wrong for both reasons. Captured
+    here, at the moment of termination, onto the attempt's own column.
+
+    Left as None when the rig reported nothing: §6 forbids substituting zero for
+    unknown, and a run that completed no cycles is a different claim from one we
+    cannot account for.
+    """
+    done = getattr(test, "current_cycle", None)
+    if done:
+        attempt.cycles_completed = done
+    return attempt.cycles_completed

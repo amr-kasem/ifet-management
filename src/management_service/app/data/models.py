@@ -34,6 +34,12 @@ class AirtableProtocolRef:
 
     airtable_protocol_id = Column(String, nullable=True, index=True)
     airtable_section_id = Column(String, nullable=True, index=True)
+
+    # Declared by a person at run start, before any hardware moves — see
+    # `a3d8e5c71f04`. The rig's trial callback inherits it, which is why the
+    # firmware wire contract needs no change to make a rig attempt completable.
+    # On the mixin so all four test types capture it the same way.
+    operator_name = Column(String, nullable=True)
     # Airtable's `Section Name` — e.g. "DP (+) (PSF)". Also what the envelope
     # sends as `Test Name`.
     airtable_section_name = Column(String, nullable=True)

@@ -480,3 +480,17 @@ class ImpactTestSchema(BaseModel):
 
 # ProjectSchema forward-references ManualTestSchema, which is declared below it.
 ProjectSchema.model_rebuild()
+
+
+class RunStartSchema(BaseModel):
+    """Who is running this test. Declared, never authenticated (contract §4).
+
+    Sent by the UI at run start, before hardware moves. The rig's trial callback
+    then inherits it, which is why capturing the operator needs no firmware
+    change: it is not a fact the rig has.
+    """
+
+    operator_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
