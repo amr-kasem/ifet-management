@@ -9,7 +9,22 @@ tests an operator enters by hand. Static Load and Cycles are unchanged and are
 not described here.
 
 Machine-readable: `src/management_service/openapi.json`, or `/docs` on a running
-instance.
+instance. Both are regenerated from the running app, not hand-written.
+
+**What is actually verified**, as of 2026-09-08 — because "documented" and
+"tested" are not the same thing:
+
+- **All 18 routes are exercised by the suite.** `tests/route_coverage.py` records
+  the matched route of every request the tests make and exits non-zero if any is
+  unexercised, so a route added without a test fails rather than passes quietly.
+  It was written because the honest answer to "are they all tested?" was 13 of 18.
+- **246 tests + 84 subtests** against **PostgreSQL 13**, the version production
+  runs — not SQLite.
+- **The migration is rehearsed against populated tables**, not an empty database:
+  P1 → M2 → `d1a6b93f2e57` in one ordered upgrade, with the 114-shot backfill,
+  then rolled back.
+- **Every route in this document is cross-checked against `openapi.json`.** The
+  route tables here are not maintained by hand alone.
 
 ---
 
@@ -162,7 +177,7 @@ result.
 | `PUT /test-results/{id}/verdict` | `{"test_result": "Pass", "verdict_by": "reviewer-1", "retest_required": false, "rationale": "optional"}` |
 | `POST /test-results/{id}/photos` | attempt-level evidence; `multipart/form-data` with `file` and optional `note` |
 | `GET /test-results/{id}` | the attempt |
-| `PUT /test-results/{id}` | amend the attempt's `note` / `image_path` only. **Pre-existing route** — it does not touch the verdict or any measurement, and it is not a way to edit a reviewed attempt |
+| `PUT /test-results/{id}` | amend the attempt's `note` / `image_path` only. **Pre-existing route** — it does not touch the verdict or any measurement, and it is not a way to edit a reviewed attempt. ⚠️ **`multipart/form-data`, not JSON** — it predates the JSON routes, so a JSON body is accepted, changes nothing, and still returns `200` |
 
 `test_result` must be `Pass`, `Fail` or `Inconclusive` — **not** the Airtable
 spellings `Passed`/`Failed`, which the sync layer translates later.
@@ -225,9 +240,9 @@ fully testable — that is the normal mode, not a degraded one.
 - **Errors are meant to be shown.** The `detail` strings say what to do next;
   surface them rather than replacing them with "something went wrong".
 - **A test with no attempts is normal.** It means created, not yet started.
-- **`GET /projects/{id}` still works and now includes these.** `ProjectSchema`
-  embeds `missile_impact_tests`; its `missile` and shot `area`/`velocity` are
-  now nullable, so handle `null`.
+- **Handle `null` on the project payload.** `missile`, `missile_weight` and a
+  shot's `area` / `velocity` / `note` are all nullable now. The project route is
+  `GET /devices/{id}/projects/`; there is no `GET /projects/{id}`.
 - **Render `shot_number`, never the shot `id`.** They are unrelated numbers, and
   the id is meaningless to an operator.
 - **`shot_id` says where a photograph belongs.** Set → it shows that impact.
