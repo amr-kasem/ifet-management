@@ -330,8 +330,8 @@ def build():
     imp = _literals(APP / "airtable" / "importer.py")
     hold = _static_hold_seconds()
     options = _test_type_options()
-    _, by_type = _rows(DOCS / "evidence" / "business-io-reconciliation-2026-09-08"
-                       / "reconciliation.csv", "test_type")
+    rows, by_type = _rows(DOCS / "evidence" / "business-io-reconciliation-2026-09-08"
+                          / "reconciliation.csv", "test_type")
     reg_rows, _ = _rows(REGISTER, "airtable_field")
     phase = {r["airtable_field"]: r["write_phase"] for r in reg_rows}
 
@@ -399,6 +399,69 @@ def build():
     w("pages, and each is a place where we made a call you may not want.")
     w("")
     w("Approved by: ______________________________   Date: ______________")
+    w("")
+    w("---")
+    w("")
+
+    # -- the pre-fill page: the product owner's own principle ---------------
+    w("## Nothing the proposal already says is retyped")
+    w("")
+    w("> *\"The operator should not have to manually recreate information that already exists in HubSpot or")
+    w("> Airtable.\"*")
+    w("")
+    w("This is the principle these pages are built on, so it is worth stating what it amounts to in fields")
+    w("rather than in intent. **Every row marked *from the proposal* on the five pages that follow is a field")
+    w("the operator never types.**")
+    w("")
+    prefill = [r for r in rows if r["direction"] == "IN"]
+    per = {}
+    for r in prefill:
+        per.setdefault(r["test_type"], []).append(r)
+    live = [r for r in prefill if r["state"].startswith("OK")]
+    w(f"**{len(live)} fields are read from Airtable and pre-filled today**, out of {len(prefill)} the")
+    w("integration reads in total — and that total is the whole of it. The read boundary is a list in the")
+    w("code, not a convention: a field not on the list is not copied, which is also how the commercial")
+    w("fields stay out.")
+    w("")
+    w("| Where it applies | Pre-filled from Airtable |")
+    w("|---|---|")
+    labels = {
+        "ALL": "Every test — the job, specimen, protocol and requirement identity",
+        "GAUGE_COUNT": "How many deflection gauges *(a parameter, not a test)*",
+        "WATER": "Water infiltration *(deferred — see the appendix)*",
+    }
+    for key in ["ALL"] + ORDER + ["GAUGE_COUNT", "WATER"]:
+        if key not in per:
+            continue
+        label = labels.get(key) or PROSE[key]["title"]
+        seen, cells = set(), []
+        for r in per[key]:
+            if r["airtable_field"] in seen:
+                continue
+            seen.add(r["airtable_field"])
+            cells.append(f"`{r['airtable_field']}`{_flag(r)}")
+        w(f"| {label} | {' · '.join(cells)} |")
+    w("")
+    if len(live) != len(prefill):
+        w("The three carrying a note are read but not yet fully acted on: the target impact velocity does not")
+        w("reach the operator (question 3), the gauge count is not reconciled against what the rig takes at")
+        w("start, and water infiltration is out of scope for this release. **None of them is a field anybody")
+        w("retypes** — they are read; what is incomplete is what we do with them afterwards.")
+        w("")
+    w("The design-pressure pair is the one worth pointing at twice: **two numbers pre-filled become fourteen")
+    w("test stages**, none of which anybody types or checks.")
+    w("")
+    w("**What the operator does still enter is not information that already exists** — it is what the test")
+    w("produced: the outcomes, the measurements, the notes, the photographs, the verdict, and which rig ran")
+    w("it. None of that is in Airtable to be recreated.")
+    w("")
+    w("**On HubSpot specifically.** LabOS does not read HubSpot and does not need to. Contract §1 sets the")
+    w("boundary — *HubSpot supplies approved commercial scope; Airtable owns the assigned")
+    w("project/specimen/protocol hierarchy* — and HubSpot's own identity already arrives in Airtable on")
+    w("`IFET Projects` as `Hubspot Deal ID` and `Hubspot Deal Stage`. So anything from HubSpot that an")
+    w("operator would otherwise retype reaches us through Airtable, and what does not reach us is commercial")
+    w("data a rig has no use for. **If you expect LabOS to read HubSpot directly, that is a new scope item")
+    w("and not a gap in this document** — say so and it gets planned rather than assumed.")
     w("")
     w("---")
     w("")
