@@ -166,13 +166,28 @@ PROSE = {
         "derived": "**One test type, not two.** Large missile and small missile are the same "
                    "procedure with a different missile, so the missile is a field on the "
                    "test and not a separate kind of test.\n\n"
-                   "Each impact is its own numbered record — impact 1, 2, 3 — with its own "
-                   "pass/fail and its own photographs, attached to that impact rather than "
-                   "to the test as a whole. A retest is a new attempt, numbered from 1 "
-                   "again, and it never overwrites its predecessor.",
-        "cannot": "**Airtable gets a roll-up, not one row per impact.** Their table is one "
-                  "row per attempt, so the per-impact breakdown travels in the JSON "
-                  "response.\n\n"
+                   "**One attempt per impact — as you specified on 2026-09-08.** An impact "
+                   "test contains one or more attempts and each attempt is exactly one "
+                   "impact, with its own pass/fail, its own photographs and its own "
+                   "verdict. Impact 1, 2, 3 are three attempts, not one attempt holding "
+                   "three impacts, and none of them ever overwrites another.\n\n"
+                   "There is no separate notion of re-doing impact 3: a specimen already "
+                   "struck cannot have that impact repeated, so a further firing is impact "
+                   "6, which is simply the next attempt. A result recorded *wrongly* is a "
+                   "different thing and is superseded rather than overwritten — see the "
+                   "last page.",
+        "cannot": "**The new shape is specified and not yet built.** Everything above is "
+                  "your 2026-09-08 instruction written down; the two rows marked *not "
+                  "built yet* are the work it creates. It is a change of grouping rather "
+                  "than of data — every field already exists — and it needs one field "
+                  "added on the Airtable side, `Impact Number`, so that a roll-up on their "
+                  "side counts *tests* and *impacts* separately. Without it a five-impact "
+                  "test would read as five tests, and read plausibly. That is question 6, "
+                  "and it is why the Airtable document has not gone out yet.\n\n"
+                  "**Five impacts become five rows in the Airtable base**, each with its "
+                  "own verdict and photographs, where today they are one row with a "
+                  "summary line. This follows directly from attempts being the unit we "
+                  "publish.\n\n"
                   "**The target impact velocity is read but never shown.** It comes across "
                   "from the proposal and is frozen onto the attempt, so it is in the "
                   "record — but it does not appear on the test the operator is looking at. "
@@ -220,6 +235,11 @@ PROSE = {
 
 ORDER = ["STATIC", "CYCLIC", "IMPACT", "FORCED_ENTRY", "ANSI"]
 
+# Spelled out, because "The 6 answers we need" reads like a form field and this
+# document is asking a person for a decision.
+WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five", 6: "six",
+         7: "seven", 8: "eight", 9: "nine"}
+
 QUESTIONS = [
     ("ANSI ordering is recorded but not enforced",
      "ANSI Z97.1 is normally first on a specimen. LabOS records that and does not block the "
@@ -242,6 +262,13 @@ QUESTIONS = [
      "different programme, LabOS would run the full one without saying so. Is *Full* the "
      "only static programme in practice? If not, we should make LabOS refuse the others out "
      "loud rather than ignore them."),
+    ("A five-impact test will appear as five records in the Airtable base",
+     "This follows from one attempt per impact: attempts are what we publish, so five impacts are five rows, "
+     "each with its own verdict and photographs, where today they are one row with a summary line. It changes "
+     "what the Airtable team's views, groupings and automations see, and it needs one field added on their "
+     "side — `Impact Number` — so a roll-up can count five impacts of one test rather than five tests. "
+     "Confirm that is what you intend, because it is the half of the instruction that lands on somebody "
+     "else's base."),
 ]
 
 
@@ -348,7 +375,7 @@ def build():
         "CYCLIC": ("the same pair — nothing further",
                    f"{len(c_high)} stages, {sum(c_counts):,} cycles in total"),
         "IMPACT": ("missile, missile weight, how many impacts, target velocity",
-                   "one numbered record per impact, each with its own pass/fail and photographs"),
+                   "one attempt per impact — each with its own pass/fail, photographs and verdict"),
         "FORCED_ENTRY": ("the grade to judge against — no numbers",
                          "one pass/fail verdict per attempt, with notes and photographs"),
         "ANSI": ("the class to judge against — no numbers",
@@ -364,8 +391,8 @@ def build():
     w("**What you are not approving:** anything that changes a production rig. None of the three new")
     w("tests touch rig hardware, there is no firmware change in this work, and nothing is deployed.")
     w("")
-    w("**Five answers are needed rather than a general yes** — they are listed after the five pages, and")
-    w("each is a place where we made a call you may not want.")
+    w(f"**{WORDS[len(QUESTIONS)].capitalize()} answers are needed rather than a general yes** — they are listed after the five")
+    w("pages, and each is a place where we made a call you may not want.")
     w("")
     w("Approved by: ______________________________   Date: ______________")
     w("")
@@ -504,7 +531,7 @@ def build():
     w("")
 
     # -- page 7: the questions and the appendix ----------------------------
-    w("## The five answers we need")
+    w(f"## The {WORDS[len(QUESTIONS)]} answers we need")
     w("")
     for i, (head, body) in enumerate(QUESTIONS, 1):
         w(f"**{i}. {head}.** {body}")
