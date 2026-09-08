@@ -283,16 +283,22 @@ class AttemptLifecycle(_Base):
         self.finish(self.attempt["id"], result=True)
         self.verdict(self.attempt["id"], test_result="Fail", retest_required=True)
 
+        # Form-encoded, not JSON: it predates the JSON routes and takes
+        # `note` and `image` as multipart form fields.
         r = self.client.put(f"/test-results/{self.attempt['id']}",
-                            json={"note": "amended after the fact"})
+                            data={"note": "amended after the fact"})
         self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["note"], "amended after the fact")
 
-        after = self.client.get(f"/test-results/{self.attempt['id']}").json()
-        self.assertEqual(after["note"], "amended after the fact")
-        # The verdict is untouched by it.
-        self.assertEqual(after["test_result"], "Fail")
-        self.assertEqual(after["verdict_by"], "reviewer-1")
-        self.assertIs(after["retest_required"], True)
+        # Its response schema exposes only id/trial_number/note/image_path/
+        # result — it cannot even return a verdict — so the verdict is checked
+        # through the attempt route, which can.
+        attempt = self.client.get(
+            f"/projects/1/manual-tests/{self.test_id}/trials").json()[0]
+        self.assertEqual(attempt["note"], "amended after the fact")
+        self.assertEqual(attempt["test_result"], "Fail")
+        self.assertEqual(attempt["verdict_by"], "reviewer-1")
+        self.assertIs(attempt["retest_required"], True)
 
     def test_a_photo_attaches_to_the_attempt(self):
         r = self.client.post(f"/test-results/{self.attempt['id']}/photos",
