@@ -163,8 +163,15 @@ def main(argv=None):
     print(f"{len(rows)} rows -> {args.out}")
     print(f"  {len(real)} real fields: {len(used)} LabOS touches, "
           f"{len(real) - len(used)} deliberately ignored")
+    # "omitted" not "proposed": the audit of 2026-09-07 found this line calling
+    # decided omissions proposals, because it only distinguished PLANNED from
+    # everything else absent. An OMITTED row is a decision with a reason, not an
+    # idea awaiting agreement, and the difference matters when the Airtable team
+    # reads it.
+    omitted = sum(1 for r in absent if r["delivery_state"] == "OMITTED")
     print(f"  {len(absent)} absent from the testing base: "
-          f"{planned} decided, {len(absent) - planned} only proposed")
+          f"{planned} planned local-only, {omitted} omitted by decision, "
+          f"{len(absent) - planned - omitted} other")
     return 0
 
 
