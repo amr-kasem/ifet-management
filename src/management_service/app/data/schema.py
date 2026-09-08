@@ -373,6 +373,28 @@ class AttemptFinishSchema(BaseModel):
         from_attributes = True
 
 
+class AttemptCorrectSchema(BaseModel):
+    """Supersede a recorded result: a new attempt naming the one it replaces.
+
+    `reason` is required and not defaulted. Contract §4.1 puts it in the
+    always-required set beside `Corrects Attempt ID`, because a correction with
+    no stated reason is indistinguishable downstream from a retest — and the
+    change document's argument to the Airtable team is precisely that those two
+    must never be confusable.
+
+    No `result` here. A correction starts open and is recorded and finished
+    through the ordinary paths, so there is one lifecycle rather than two: the
+    correction is a normal attempt that happens to name its predecessor.
+    """
+
+    reason: str
+    # Who is making the correction, which need not be who ran the original.
+    operator_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
 class VerdictSchema(BaseModel):
     """The first review. Recorded once, by someone with a name.
 
@@ -414,6 +436,14 @@ class AttemptSchema(BaseModel):
     verdict_at: Optional[_dt.datetime] = None
     retest_required: Optional[bool] = None
     result_rationale: Optional[str] = None
+
+    # The correction chain, exposed 2026-09-08 with the correction route. Both
+    # are `None` on an ordinary attempt and on a retest, and populated together
+    # on a correction — which is the whole distinction the change document
+    # promises the Airtable team, so a client showing an attempt should be able
+    # to see it without a second request.
+    corrects_attempt_id: Optional[str] = None
+    correction_reason: Optional[str] = None
 
     testing_start_date: Optional[_dt.datetime] = None
     testing_end_date: Optional[_dt.datetime] = None

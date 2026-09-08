@@ -35,11 +35,14 @@ async def _record(request, call_next):
     return resp
 
 loader = unittest.TestLoader()
-# Both suites: the manual-test routes and the sync surface added 2026-09-08.
-# Discovering only one of them would report the other's routes as unexercised.
+# Every suite that drives the new surface. Discovering a subset reports the
+# rest's routes as unexercised, which is a false negative that reads exactly
+# like a real gap — `POST /test-results/{id}/correct` was MISSED the moment it
+# existed, purely because its own suite was not in this list.
 suite = unittest.TestSuite([
     loader.discover("tests", pattern="test_manual_tests.py"),
     loader.discover("tests", pattern="test_business_acceptance.py"),
+    loader.discover("tests", pattern="test_corrections.py"),
 ])
 res = unittest.TextTestRunner(verbosity=0).run(suite)
 

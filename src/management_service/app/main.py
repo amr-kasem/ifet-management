@@ -1641,6 +1641,148 @@ def finish_attempt(test_result_id: int, body: AttemptFinishSchema,
     return attempt
 
 
+# Each attempt subclass, the column naming its parent test, and that parent.
+# Ordered rather than keyed on `test_type`, for the same reason `_kind_of` is
+# keyed on the table: `manual_tests` holds two test types.
+_ATTEMPT_PARENT = (
+    (StaticTestResult, "static_test_id", StaticTest),
+    (CyclicTestResult, "cyclic_test_id", CyclicTest),
+    (ManualTestResult, "manual_test_id", ManualTest),
+    (ImpactTestResult, "missile_impact_test_id", MissileImpactTest),
+)
+
+
+def _typed_attempt(db, attempt_id):
+    """The attempt as its own subclass, with its parent test resolved.
+
+    **`db.query(TestResult)` cannot do this.** The subclasses are joined-table
+    inheritance with no polymorphic discriminator, so a query against the base
+    returns base `TestResult` rows whose `__tablename__` is always
+    `test_results` — the subclass, and therefore the parent test, is not
+    recoverable from the object. `_impact_attempt` already queries its subclass
+    directly for exactly this reason; this is that idiom for all four.
+
+    Returns `(attempt, fk_name, test)` or `(None, None, None)` when the id
+    belongs to no per-type attempt table — which is the pre-integration rows.
+    """
+    for cls, fk_name, parent_cls in _ATTEMPT_PARENT:
+        row = db.query(cls).filter(cls.id == attempt_id).first()
+        if row is None:
+            continue
+        parent_id = getattr(row, fk_name, None)
+        test = (db.query(parent_cls).filter(parent_cls.id == parent_id).first()
+                if parent_id is not None else None)
+        return row, fk_name, test
+    return None, None, None
+
+
+@app.post("/test-results/{test_result_id}/correct", response_model=AttemptSchema)
+def correct_attempt(test_result_id: int, body: AttemptCorrectSchema,
+                    db: Session = Depends(get_db)):
+    """Supersede a recorded result with a new attempt that names it.
+
+    **The gap this closes.** `corrects_attempt_id` and `correction_reason` have
+    had columns, a property and an envelope mapping since P1, and nothing set
+    them — so every attempt was a retest, and a wrongly recorded result could
+    only be superseded by claiming a physical test that never happened. There is
+    also no edit or delete route for a shot or an attempt, by design, so until
+    this existed a mis-recorded result had no route at all.
+
+    Why it matters beyond our own records: the change document's §0.3 argument to
+    the Airtable team is that a retest and a correction are indistinguishable
+    without this field, and that a roll-up counting attempts would then be wrong
+    *and look right*. This is the half of that promise that lives on our side.
+
+    The correction starts **open**, and is recorded and finished through the
+    ordinary paths. So there is one lifecycle rather than two, and a correction
+    is an ordinary attempt that happens to name its predecessor.
+
+    Three refusals, each for a different reason:
+
+    * **The original must be terminal.** An open attempt is finished correctly,
+      not corrected — its evidence is not frozen yet, so there is nothing to
+      supersede.
+    * **The test must have no open attempt.** A correction creates one, and two
+      open attempts for one test make "the current attempt" ambiguous.
+    * **A reason is required** — enforced in `attempts.as_correction`, because
+      contract §4.1 puts it in the always-required set beside the reference.
+
+    Deliberately *not* refused when the parent test is `finished`. Correcting a
+    record is not running the rig again, and a finished test is exactly where a
+    correction is most likely to be needed.
+    """
+    original = db.query(TestResult).filter(TestResult.id == test_result_id).first()
+    if not original:
+        raise HTTPException(status_code=404, detail="Attempt not found")
+
+    if original.status not in (_COMPLETED, _ABORTED):
+        raise HTTPException(
+            status_code=400,
+            detail=f"This attempt is {original.status!r}, not finished. An open "
+                   "attempt is completed correctly rather than corrected — "
+                   "there is no recorded result to supersede yet.")
+
+    typed, fk_name, test = _typed_attempt(db, test_result_id)
+    if typed is None:
+        raise HTTPException(
+            status_code=400,
+            detail="This attempt predates the per-type attempt tables, so the "
+                   "test it belongs to cannot be resolved. Corrections are "
+                   "available on attempts recorded through the current routes.")
+    if test is None:
+        raise HTTPException(
+            status_code=400,
+            detail="The test this attempt belongs to no longer exists, so a "
+                   "correction has nothing to attach to.")
+    original = typed
+
+    open_now = attempts.open_attempt_for(db, type(original), fk_name, test.id)
+    if open_now is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Attempt {open_now.trial_number} of this test is still open. "
+                   "Finish or abort it before recording a correction, so that "
+                   "one test has one open attempt.")
+
+    # **The original's `labos_test_id`, not a freshly derived one.** Deriving it
+    # would be right for a test created through the current routes and wrong for
+    # a legacy one, whose id was a random uuid4 — and a correction that lands in
+    # a different group is exactly the failure `labos_test_id` exists to prevent.
+    test_id = original.labos_test_id or attempts.test_id_for_test(
+        _kind_of(test), test.id)
+
+    def build():
+        return type(original)(
+            trial_number=attempts.next_attempt_number(db, test_id),
+            test_type=original.test_type,
+            test_name=original.test_name,
+            status=_IN_PROGRESS,
+            test_result=_PENDING,
+            operator_name=body.operator_name or original.operator_name,
+            testing_start_date=_utcnow(),
+            labos_test_id=test_id,
+            labos_created_at=_utcnow(),
+            labos_updated_at=_utcnow(),
+            schema_version=None,
+            **{fk_name: test.id},
+        )
+
+    correction = attempts.insert_attempt(db, build)
+    # Raises ValueError on an empty reason or a self-reference; both are client
+    # errors, so they are reported as such rather than as a 500.
+    try:
+        attempts.as_correction(correction, original.labos_attempt_id, body.reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    db.flush()
+    importer.freeze_requirement(db, correction, test)
+    publish.record_phase(db, correction, publish.CREATE)
+    db.commit()
+    db.refresh(correction)
+    return correction
+
+
 @app.put("/test-results/{test_result_id}/verdict", response_model=AttemptSchema)
 def review_attempt(test_result_id: int, body: VerdictSchema,
                    db: Session = Depends(get_db)):
