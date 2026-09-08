@@ -211,9 +211,20 @@ def main(argv=None):
         doc = SPEC.parent.parent.parent / "correspondence" / "testing-base-change-document-2026-09-08.md"
         if doc.exists():
             text = doc.read_text()
-            for label, n in (("reads", len(reads)), ("always", always),
-                             ("conditional", len(conditional)),
-                             ("withheld", len(withheld)), ("ignored", ignored)):
+            # Only the numbers the document *should* state: the partition of the
+            # base, and the withheld count.
+            #
+            # `always` and `conditional` are deliberately NOT checked. Counting
+            # them from `delivery_state` is what produced the "28 always arrive"
+            # claim, and it is wrong per attempt: `Corrects Attempt ID` is
+            # BASELINE and blank on every non-correction, `Impact Result` applies
+            # to one test type, and the reviewer fields exist only after review.
+            # Presence is decided by phase and applicability, so the document
+            # states those rules instead of a number that cannot be right.
+            for label, n in (("reads", len(reads)),
+                             ("write-bound", len(out)),
+                             ("withheld", len(withheld)),
+                             ("ignored", ignored)):
                 if f"**{n}**" not in text:
                     warns.append(f"the document does not state {label} = {n}")
 
