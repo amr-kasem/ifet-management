@@ -67,7 +67,10 @@ def identity(test_type):
 TERMINAL_EXTRA = {
     C.STATIC_LOAD: {},
     C.CYCLES: {"Cycles Completed": 4500},
-    C.IMPACT: {"Impact Result": "2/2 shots, no penetration",
+    # Free text on the wire, but shaped like what `_impact_result` produces —
+    # one attempt is one impact since §4.5a, so "2/2 shots" describes a model
+    # that no longer exists and would mislead the next reader of this fixture.
+    C.IMPACT: {"Impact Result": "Pass - impact 2 resisted",
                "LabOS Photos": [{"url": "https://labos.example/p.jpg"}]},
     C.FORCED_ENTRY: {},
     C.ANSI_Z97: {},

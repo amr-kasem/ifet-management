@@ -357,7 +357,13 @@ class AttemptLifecycle(_Base):
 
 @unittest.skipIf(TestClient is None, "fastapi not installed in this environment")
 class Impact(_Base):
-    """Numbered impacts, each with its own value and its own photographs."""
+    """One attempt per impact, each with its own outcome and photographs.
+
+    **Reshaped 2026-09-08** (delivery plan §4.5a). An impact test was one
+    attempt holding a sequence of shots; the product owner respecified it as one
+    or more attempts, each being exactly one impact. The sequence is still
+    impact 1, 2, 3 — it is now made of attempts.
+    """
 
     def setUp(self):
         super().setUp()
@@ -371,6 +377,26 @@ class Impact(_Base):
         body.setdefault("result", True)
         return self.client.post(f"/test-results/{self.attempt['id']}/shots",
                                 json=body)
+
+    def impact(self, result=True, photos=1):
+        """One whole impact: its own attempt, its outcome, its evidence.
+
+        Returns `(attempt, shot)`. Terminates the attempt, because the next
+        impact is the next attempt and a test runs one attempt at a time.
+        """
+        attempt = (self.attempt if not getattr(self, "_used_first", False)
+                   else self.start("/projects/1/impact-tests", self.test_id))
+        self._used_first = True
+        r = self.client.post(f"/test-results/{attempt['id']}/shots",
+                             json={"result": result})
+        self.assertEqual(r.status_code, 200, r.text)
+        shot = r.json()
+        for i in range(photos):
+            p = self.client.post(f"/shots/{shot['id']}/photos",
+                                 files=_jpeg(f"impact{shot['shot_number']}-{i}.jpg"))
+            self.assertEqual(p.status_code, 200, p.text)
+        self._finish(attempt["id"], result=result)
+        return attempt, shot
 
     def test_missile_metadata_is_optional(self):
         """The protocol fixes it; requiring it was retyping."""
@@ -392,30 +418,52 @@ class Impact(_Base):
         self.assertEqual(r.status_code, 422)
 
     def test_impacts_are_numbered_from_one_in_order(self):
-        self.assertEqual([self.shot().json()["shot_number"] for _ in range(3)],
-                         [1, 2, 3])
+        """And the number is the attempt's, mirrored onto its impact."""
+        numbers = []
+        for _ in range(3):
+            attempt, shot = self.impact()
+            numbers.append((attempt["trial_number"], shot["shot_number"]))
+        self.assertEqual(numbers, [(1, 1), (2, 2), (3, 3)])
 
     def test_the_client_cannot_choose_the_number(self):
         self.assertEqual(self.shot(shot_number=7).json()["shot_number"], 1)
 
-    def test_numbering_restarts_per_attempt(self):
-        first_shot = self.shot()
-        first = first_shot.json()["shot_number"]
-        # An impact attempt needs an impact and a photograph to finish, both of
-        # which it now has, so terminate it before starting attempt 2.
-        self.client.post(f"/shots/{first_shot.json()['id']}/photos", files=_jpeg())
-        self._finish(self.attempt["id"], result=False)
-        second_attempt = self.start("/projects/1/impact-tests", self.test_id)
-        r = self.client.post(f"/test-results/{second_attempt['id']}/shots",
-                             json={"result": True})
-        self.assertEqual((first, r.json()["shot_number"]), (1, 1))
+    def test_numbering_does_not_restart(self):
+        """It used to restart per attempt. Now the attempt *is* the impact.
+
+        The old behaviour would give every impact `shot_number = 1`, and the
+        number is published — the JSON emits it as which impact this is.
+        """
+        _first, shot1 = self.impact()
+        second, shot2 = self.impact()
+        self.assertEqual((shot1["shot_number"], shot2["shot_number"]), (1, 2))
+        self.assertEqual(second["trial_number"], shot2["shot_number"])
+
+    def test_one_attempt_refuses_a_second_impact(self):
+        """The invariant, and it is the constraint reporting itself in words."""
+        self.assertEqual(self.shot().status_code, 200)
+        r = self.shot(result=False)
+        self.assertEqual(r.status_code, 409, r.text)
+        self.assertIn("One attempt is one impact", r.text)
+
+    def test_the_attempt_outcome_follows_its_impact(self):
+        """No `result` on finish: an impact attempt's outcome is its impact's."""
+        shot = self.shot(result=False).json()
+        self.client.post(f"/shots/{shot['id']}/photos", files=_jpeg())
+        r = self.client.put(f"/test-results/{self.attempt['id']}/finish",
+                            json={"testing_continued": "Stopped"})
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertIs(r.json()["result"], False)
 
     def test_how_many_and_whether_each_passed(self):
-        for res in (True, True, False):
-            self.shot(result=res)
-        listed = self.client.get(f"/test-results/{self.attempt['id']}/shots").json()
-        self.assertEqual([s["result"] for s in listed], [True, True, False])
-        self.assertEqual([s["shot_number"] for s in listed], [1, 2, 3])
+        """Three impacts are three attempts, each carrying its own outcome."""
+        results = [self.impact(result=r)[1]["result"] for r in (True, True, False)]
+        self.assertEqual(results, [True, True, False])
+
+        listed = self.client.get(f"/projects/1/impact-tests/").json()
+        attempts = next(t for t in listed if t["id"] == self.test_id)["trials"]
+        self.assertEqual([a["trial_number"] for a in attempts], [1, 2, 3])
+        self.assertEqual([a["result"] for a in attempts], [True, True, False])
 
     def test_one_impact_can_carry_several_photographs(self):
         """"A few photos" per impact — the relationship is one-to-many.
@@ -438,15 +486,15 @@ class Impact(_Base):
                          ["wide shot", "corner detail", "interior face"])
 
     def test_photographs_stay_with_their_own_impact(self):
-        """Three impacts, different numbers of photographs each."""
-        shots = [self.shot(result=r).json() for r in (True, False, True)]
-        for shot, n in zip(shots, (0, 2, 1)):
-            for i in range(n):
-                self.client.post(f"/shots/{shot['id']}/photos",
-                                 files=_jpeg(f"s{shot['shot_number']}-{i}.jpg"))
-        listed = self.client.get(f"/test-results/{self.attempt['id']}/shots").json()
-        self.assertEqual([(s["shot_number"], len(s["photos"])) for s in listed],
-                         [(1, 0), (2, 2), (3, 1)])
+        """Three impacts in three attempts, different photograph counts each."""
+        seen = []
+        for result, n in ((True, 1), (False, 3), (True, 2)):
+            attempt, shot = self.impact(result=result, photos=n)
+            listed = self.client.get(
+                f"/test-results/{attempt['id']}/shots").json()
+            self.assertEqual(len(listed), 1, "one attempt, one impact")
+            seen.append((listed[0]["shot_number"], len(listed[0]["photos"])))
+        self.assertEqual(seen, [(1, 1), (2, 3), (3, 2)])
 
     def test_attempt_photos_and_impact_photos_do_not_mix(self):
         """An attempt-level photograph has shot_id NULL and is not listed under
@@ -478,11 +526,13 @@ class Impact(_Base):
         self.assertEqual(len(listed[0]["photos"]), 1)
         self.assertEqual(listed[0]["photos"][0]["note"], "corner detail")
 
-    def test_completion_requires_at_least_one_impact(self):
+    def test_completion_requires_its_one_impact(self):
+        """§4.5a: exactly one, so an attempt with none has nothing to report."""
         self.client.post(f"/test-results/{self.attempt['id']}/photos", files=_jpeg())
         r = self.finish(self.attempt["id"])
         self.assertEqual(r.status_code, 400)
-        self.assertIn("at least one impact", r.text)
+        self.assertIn("exactly one impact", r.text)
+        self.assertIn("has 0", r.text)
 
     def test_completion_requires_a_photograph(self):
         """Impact's evidence rule lives here, not in the outbound payload."""

@@ -53,7 +53,10 @@ ENDED = dt.datetime(2026, 9, 8, 10, 30, 0, tzinfo=dt.timezone.utc)
 TYPES = (
     (C.STATIC_LOAD, {}),
     (C.CYCLES, {"Cycles Completed": 1000}),
-    (C.IMPACT, {"Impact Result": "Pass - 3 of 3 impacts resisted"}),
+    # One attempt is one impact since 2026-09-08 (§4.5a), so the summary names
+    # the impact rather than summarising a sequence. This literal is what
+    # `mapping._impact_result` now produces; it is not a free-form label.
+    (C.IMPACT, {"Impact Result": "Pass - impact 3 resisted"}),
     (C.FORCED_ENTRY, {}),
     (C.ANSI_Z97, {}),
 )

@@ -49,35 +49,41 @@ def owning_test(attempt):
 def _impact_result(attempt):
     """The one-line Impact summary contract §5.1 requires on a terminal write.
 
-    Derived from the numbered impacts rather than typed, because the operator
-    already recorded each impact's outcome and asking twice invites the two to
-    disagree. `attempt.impact_result` still wins if something set it.
+    **One attempt is one impact** (delivery plan §4.5a, product owner
+    2026-09-08), so this names the impact and its outcome rather than
+    summarising a sequence. `Pass - 3 of 3 impacts resisted` became
+    `Pass - impact 3 resisted`.
 
-    Free text by design — `Impact Result` is `singleLineText` in their base and
-    the per-impact detail travels in the JSON, so this is the human-readable
-    summary a person scanning the base sees. It names the failing impacts
-    because "Fail" alone sends the reader to the JSON to learn which.
+    The ordinal comes from `attempt.trial_number`, not `shot.shot_number`.
+    `trial_number` is the single authoritative impact ordinal; `shot_number`
+    mirrors it so the published JSON stays meaningful, and reading the mirror
+    here would perpetuate the redundancy rather than contain it.
 
-    None when there are no impacts, which correctly refuses the terminal
-    payload: an Impact attempt cannot be completed without at least one impact,
-    and the finish route enforces that before this is ever reached.
+    **No total.** The old string carried "of 3" because one attempt held the
+    whole sequence. Per row there is no honest total: impacts accrue one attempt
+    at a time, and the only count available is `projects.impact_count`, which is
+    what the protocol *requires* rather than what was fired. "of 5" when the
+    fifth may never be fired is worse than no number.
+
+    The outcome still comes from the impact rather than the attempt, because at
+    terminal time the verdict is `Pending` — the operator's recorded pass/fail
+    is on the shot. There is no "no outcome" branch: `Shot.result` is `NOT NULL`,
+    so the `Incomplete` case the sequence version carried was already
+    unreachable.
+
+    None when the attempt has no impact, which correctly refuses the terminal
+    payload: an Impact attempt cannot be completed without its impact, and the
+    finish route enforces that before this is ever reached.
     """
     if attempt.test_type != C.IMPACT:
         return None
     shots = getattr(attempt, "shots", None) or []
     if not shots:
         return None
-    total = len(shots)
-    failed = sorted(sh.shot_number for sh in shots if sh.result is False)
-    if failed:
-        which = ", ".join(str(n) for n in failed)
-        return f"Fail - impact {which} of {total} did not resist"
-    unknown = [sh for sh in shots if sh.result is None]
-    if unknown:
-        # An impact with no recorded outcome is not a pass. Saying so is the
-        # §4.5 rule that missing data is never a pass, applied to the summary.
-        return f"Incomplete - {len(unknown)} of {total} impacts have no outcome"
-    return f"Pass - {total} of {total} impacts resisted"
+    ordinal = attempt.trial_number
+    if shots[0].result:
+        return f"Pass - impact {ordinal} resisted"
+    return f"Fail - impact {ordinal} did not resist"
 
 
 def _iso(value):

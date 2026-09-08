@@ -1603,11 +1603,21 @@ def finish_attempt(test_result_id: int, body: AttemptFinishSchema,
     else:
         impact = _impact_attempt(db, attempt.id)
         if impact is not None:
-            if not impact.shots:
+            # **Exactly one, not at least one** (§4.5a). One attempt is one
+            # impact, so an attempt with none has nothing to report and an
+            # attempt with several is a shape the constraint should already have
+            # refused — checked here too, because a database error at terminal
+            # time would be reported as a 500 rather than as the operator's
+            # problem.
+            if len(impact.shots) != 1:
                 raise HTTPException(
                     status_code=400,
-                    detail="A completed impact attempt records at least one impact. "
-                           "Post a shot, or supply `abort_reason` to abandon it.")
+                    detail=("A completed impact attempt records exactly one impact; "
+                            f"this one has {len(impact.shots)}. "
+                            + ("Post the impact, or supply `abort_reason` to abandon "
+                               "the attempt." if not impact.shots else
+                               "One attempt is one impact — record the others as "
+                               "their own attempts."))) 
             # Impact requires photographic evidence, and it is checked HERE
             # rather than in the outbound payload: attachments deliver on their
             # own channel and may settle after the row is published (write
@@ -1626,6 +1636,15 @@ def finish_attempt(test_result_id: int, body: AttemptFinishSchema,
         attempt.status = _COMPLETED
         if body.result is not None:
             attempt.result = body.result
+        elif impact is not None and impact.shots:
+            # **The attempt's outcome is its impact's outcome.** With one impact
+            # per attempt the two cannot differ, and the `elif body.result is
+            # None` branch above never reaches an impact attempt — its outcome
+            # comes from the shot, not from a body field. Left unset, an impact
+            # attempt terminated without an explicit `result` had `None` here
+            # while its impact recorded pass or fail, so the attempt row
+            # disagreed with the impact it contained.
+            attempt.result = impact.shots[0].result
 
     attempt.note = body.note or attempt.note
     attempt.testing_continued = body.testing_continued
@@ -2191,23 +2210,39 @@ def add_attempt_photo(test_result_id: int, file: UploadFile = File(...),
 @app.post("/test-results/{test_result_id}/shots", response_model=ShotDetailSchema)
 def record_shot(test_result_id: int, body: ShotRecordSchema,
                 db: Session = Depends(get_db)):
-    """Record one impact — numbered, with its outcome.
+    """Record this attempt's impact — one attempt, one impact.
 
-    An impact test is a sequence: impact 1, 2, 3. `shot_number` is allocated
-    here rather than accepted from the client, because a client that chose its
-    own could number two impacts the same or renumber a sequence someone has
-    already photographed.
+    **One attempt per impact** (delivery plan §4.5a, product owner 2026-09-08).
+    An impact test is still a sequence — impact 1, 2, 3 — but the sequence is
+    made of attempts, not of shots inside one attempt. So this route records the
+    single impact belonging to this attempt, and the next impact is the next
+    attempt.
+
+    `shot_number` mirrors `attempt.trial_number` rather than counting within the
+    attempt. Counting would give every impact `shot_number = 1`, and the number
+    is not internal: the published JSON emits it as which impact this is. The
+    mirror also makes the invariant free — two impacts on one attempt collide on
+    `uq_shots_attempt_number`, so "exactly one impact per attempt" is enforced
+    by a constraint that already existed rather than by a rule in this function.
+    The 409 below is that collision reported in words; the constraint is what
+    guarantees it.
     """
     attempt = _require_open_attempt(db, test_result_id)
     impact = _impact_attempt(db, attempt.id)
     if impact is None:
         raise HTTPException(status_code=400,
                             detail="Only an impact attempt records impacts.")
-    n = db.query(Shot).filter(Shot.test_result_id == impact.id).count()
+    existing = db.query(Shot).filter(Shot.test_result_id == impact.id).first()
+    if existing is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Attempt {impact.trial_number} already records impact "
+                   f"{existing.shot_number}. One attempt is one impact — start "
+                   "a new attempt on this test to record the next one.")
     shot = Shot(test_result_id=impact.id,
                 missile_impact_test_id=impact.missile_impact_test_id,
-                shot_number=n + 1, result=body.result, area=body.area,
-                velocity=body.velocity, note=body.note)
+                shot_number=impact.trial_number, result=body.result,
+                area=body.area, velocity=body.velocity, note=body.note)
     db.add(shot)
     db.commit()
     db.refresh(shot)
