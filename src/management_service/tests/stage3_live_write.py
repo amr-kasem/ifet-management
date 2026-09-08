@@ -102,11 +102,20 @@ def probe_values(attempt_id, test_id, *, started, ended):
         "Attempt Number": 1,
         "Test Name": "Stage 3 probe — static load",
         "Test Type": C.STATIC_LOAD,
-        "Test Result": "Pass",          # translated to their spelling at the wire
+        # **Pending, not Pass.** v0.4 separated the terminal write from the
+        # first review (§4, §6): a terminal payload carrying a verdict is
+        # refused, because it would let one write both complete a test and
+        # certify it. This harness predates that split and asserted `Pass`
+        # here, which is why it could not even dry-run afterwards. The verdict
+        # now has its own phase, exercised as check 15 below.
+        "Test Result": "Pending",
         "Measured Value": 40.0,
         "Unit": "PSF",
-        "Max Pressure Achieved": 62.5,
-        "Deflection Value": 0.42,
+        # `Max Pressure Achieved` and `Deflection Value` were sent here until
+        # 2026-09-08. Both are withheld by A2/A3 and the envelope now refuses
+        # them ahead of the pairwise rules — so a harness that sends them tests
+        # nothing but its own staleness. Their refusal is asserted in
+        # `test_business_acceptance.UnmetRequirementsStayVisible` instead.
         # Deliberately OUR vocabulary, not theirs, and this is not an oversight.
         #
         # Their sample row recxZWiVa5Wuy0ZV6 (2026-08-10) writes "Inches" here.
@@ -124,7 +133,8 @@ def probe_values(attempt_id, test_id, *, started, ended):
         # are purged. What must NOT happen is a real sync starting before §10.24
         # is answered: `envelope.build` refuses "Inches" outright (verified), so
         # their current spelling is not merely untidy, it is unsendable.
-        "Deflection Unit": "in",
+        # `Deflection Unit` is withheld with the value it labels (A3) — the
+        # envelope refuses it in the JSON as well as the column.
         "Required Value": 60.0,
         "Required Unit": "PSF",
         "Result Detail (JSON)": {
@@ -132,7 +142,10 @@ def probe_values(attempt_id, test_id, *, started, ended):
             "gauges": {"g1": 0.42, "g2": 0.31, "g3": 0.00},
         },
         "Operator Name": PROBE_OPERATOR,
-        "Retest Required": False,
+        # `Retest Required` is NOT here. §6: it is meaningful only once a review
+        # exists and is never inferred false from an unreviewed checkbox, so the
+        # envelope refuses it on a terminal write. It belongs to the verdict
+        # payload below, which is where the probe now sends it.
         "Testing Continued": "Continued",
         "Testing Start Date": started,
         "Testing End Date": ended,
@@ -162,6 +175,29 @@ def run(client, table, report, *, live, live_options):
                       False, f"{type(exc).__name__}: {exc}")
         print("\n  Cannot continue: the payload does not build. Nothing was sent.")
         return
+
+    # The verdict payload, built now so a broken one is caught before any
+    # network call. It upserts on the SAME merge key, which is the property the
+    # whole three-phase design rests on: three writes, one Airtable row.
+    verdict_values = dict(values)
+    verdict_values.update({
+        "Test Result": "Pass",
+        "LabOS Verdict By": "LABOS-PROBE-reviewer",
+        "LabOS Verdict At": ended,
+        "Retest Required": False,
+    })
+    try:
+        verdict_record = envelope.build_verdict(verdict_values,
+                                                live_options=live_options)
+        ok = verdict_record.get(MERGE_KEY) == attempt_id
+        report.record(15, "envelope",
+                      "verdict payload builds and merges on the same key", ok,
+                      "" if ok else f"built: {sorted(verdict_record)}")
+    except Exception as exc:                                  # noqa: BLE001
+        verdict_record = None
+        report.record(15, "envelope",
+                      "verdict payload builds and merges on the same key",
+                      False, f"{type(exc).__name__}: {exc}")
 
     print()
     print("  payload that will be sent (wire names):")
