@@ -15,7 +15,10 @@ LABOS_UPLOADS_DIR and written evidence somewhere the static mount does not
 serve.
 
 Exits non-zero if any route is unexercised, so it can gate a change that adds
-one.
+one. Extended 2026-09-08 to cover the three `/sync` routes and to run the
+business-acceptance suite alongside the manual-test one — with only the first
+discovered, the sync routes would have reported as unexercised when they are
+not.
 """
 import sys, unittest
 
@@ -32,10 +35,15 @@ async def _record(request, call_next):
     return resp
 
 loader = unittest.TestLoader()
-suite = loader.discover("tests", pattern="test_manual_tests.py")
+# Both suites: the manual-test routes and the sync surface added 2026-09-08.
+# Discovering only one of them would report the other's routes as unexercised.
+suite = unittest.TestSuite([
+    loader.discover("tests", pattern="test_manual_tests.py"),
+    loader.discover("tests", pattern="test_business_acceptance.py"),
+])
 res = unittest.TextTestRunner(verbosity=0).run(suite)
 
-NEW_PREFIXES = ("manual-test", "impact-test", "/shots", "test-results")
+NEW_PREFIXES = ("manual-test", "impact-test", "/shots", "test-results", "/sync")
 new = set()
 for route in main.app.routes:
     path = getattr(route, "path", "")

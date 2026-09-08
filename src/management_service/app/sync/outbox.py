@@ -30,7 +30,7 @@ against SQLite in memory and the production path against Postgres unchanged.
 import datetime as dt
 
 from sqlalchemy import (
-    Column, DateTime, Integer, JSON, String, Text, UniqueConstraint, func,
+    Column, DateTime, Integer, JSON, String, Text, UniqueConstraint, case, func,
 )
 from sqlalchemy.exc import IntegrityError
 
@@ -254,16 +254,41 @@ def enqueue(session, attempt_id, phase, payload, payload_updated_at=None,
     ) from last_error
 
 
-def _head_ids(session):
-    """The lowest open `attempt_seq` per attempt — one candidate per queue.
+def _channel(column=None):
+    """Which of an attempt's two queues an entry belongs to.
 
-    A plain `min()` group-by rather than a window function, so the same SQL runs
-    on SQLite in the tests and Postgres in production.
+    `0` = the record channel (`create` → `terminal` → `verdict`), strictly
+    ordered because each phase merges onto the row the previous one made.
+    `1` = the attachment channel.
+
+    **Contract §4 says "plus separately tracked attachment delivery" and this is
+    what makes that true.** Grouping heads by `attempt_id` alone put attachments
+    in the same FIFO as the record phases, so an attachment enqueued before the
+    verdict became the head — and a parked attachment then made the whole
+    attempt undeliverable, verdict included. §6's reason for a separate channel
+    is precisely that attachments "may finish after terminal state without
+    changing measured evidence": a queued file must not hold up a measured
+    result, and a verdict is a measured result.
+
+    Two channels, not a bypass of FIFO: ordering is still strict *within* each.
     """
+    col = SyncOutbox.phase if column is None else column
+    return case((col == ATTACHMENT, 1), else_=0)
+
+
+def _head_ids(session):
+    """The lowest open `attempt_seq` per attempt **per channel**.
+
+    Two candidates per attempt at most: the next record phase, and the next
+    attachment. A plain `min()` group-by rather than a window function, so the
+    same SQL runs on SQLite in the tests and Postgres in production.
+    """
+    channel = _channel().label("chan")
     return (session.query(func.min(SyncOutbox.attempt_seq).label("seq"),
-                          SyncOutbox.attempt_id.label("aid"))
+                          SyncOutbox.attempt_id.label("aid"),
+                          channel)
             .filter(SyncOutbox.state.in_(OPEN_STATES))
-            .group_by(SyncOutbox.attempt_id)
+            .group_by(SyncOutbox.attempt_id, _channel())
             .subquery())
 
 
@@ -279,7 +304,11 @@ def claim(session, limit=10, now=None, lease_seconds=DEFAULT_LEASE_SECONDS):
     heads = _head_ids(session)
     query = (session.query(SyncOutbox)
              .join(heads, (SyncOutbox.attempt_id == heads.c.aid)
-                   & (SyncOutbox.attempt_seq == heads.c.seq))
+                   & (SyncOutbox.attempt_seq == heads.c.seq)
+                   # ...and the same channel, so the record head and the
+                   # attachment head are both claimable rather than the lower
+                   # sequence hiding the other.
+                   & (_channel() == heads.c.chan))
              .order_by(SyncOutbox.attempt_id, SyncOutbox.attempt_seq))
 
     # `SELECT ... FOR UPDATE OF sync_outbox SKIP LOCKED` - exclusive ownership

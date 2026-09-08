@@ -2240,6 +2240,116 @@
         }
       }
     },
+    "/sync/status": {
+      "get": {
+        "summary": "Sync Status",
+        "description": "Queue health in the four contractual words, plus the worker heartbeat.\n\n`status` is one of `Synced` \u00b7 `Pending` \u00b7 `Sync Failed` \u00b7 `Retry Required`\n\u2014 the Airtable team's own four words, which is why they are contractual\nvalues and not our own vocabulary. `attachment_backlog` is counted\nseparately because evidence delivers on its own channel and a photograph\nstill in flight is not a result that failed.",
+        "operationId": "sync_status_sync_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sync/queue": {
+      "get": {
+        "summary": "Sync Queue",
+        "description": "The queue itself \u2014 one row per pending write, oldest first.\n\nOrdered by `(attempt_id, attempt_seq)` rather than by time, because the\nordering that matters is *within* an attempt: its phases merge onto one\nAirtable record and must arrive in sequence. `?state=parked` is the useful\nfilter \u2014 those are the entries that will never clear on their own.",
+        "operationId": "sync_queue_sync_queue_get",
+        "parameters": [
+          {
+            "name": "state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sync/queue/{entry_id}/retry": {
+      "post": {
+        "summary": "Sync Retry",
+        "description": "Un-park one entry. Re-enables eligibility; sends nothing.\n\nDeliberately not a send: the same single worker still owns delivery and\nstill applies the lease and the fencing token. A retry that pushed inline\nfrom the request would be a second sender, which is the one thing \u00a77.1's\nmechanisms exist to prevent.",
+        "operationId": "sync_retry_sync_queue__entry_id__retry_post",
+        "parameters": [
+          {
+            "name": "entry_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Entry Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/test-results/{test_result_id}/photos": {
       "post": {
         "summary": "Add Attempt Photo",

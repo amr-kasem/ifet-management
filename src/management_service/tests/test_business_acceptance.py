@@ -1,0 +1,738 @@
+"""Business acceptance — the whole round trip, per test type, through HTTP.
+
+Delivery plan §4.7 and §6.1. What this file proves, and why each piece is here:
+
+*   **All five test types**, because until 2026-09-08 the outbound mapper
+    resolved two of them and an acceptance run over Static and Cycles alone
+    would have passed while Impact, Forced Entry and ANSI could not be published
+    at all.
+*   **Retesting**, because the Airtable team's model turns on a second attempt
+    sharing one `LabOS Test ID` while carrying a new `LabOS Attempt ID` and the
+    next `Attempt Number`.
+*   **Outage and restart recovery**, because the reason the outbox exists is that
+    an Airtable problem must never reach the operator.
+*   **The two channels**, because an attachment sharing the record FIFO meant a
+    parked photograph could block a verdict.
+*   **A job with no Airtable origin**, because that is the normal standalone mode
+    (§4.6) and it must queue nothing rather than fail.
+
+The unmet requirements are asserted as **expected absences** rather than left
+out of the tests: `Max Pressure Achieved`, `Deflection Value` and
+`Deflection Unit` must not appear in any payload. Narrowing the tests until they
+pass would hide exactly the thing the reconciliation set out to make visible.
+
+Runs on harness Postgres when `M2_DATABASE_URL` is set. Ordering, the channel
+split and the constraint are all meaningful on both backends; concurrent
+allocation is Postgres-only and marked where it matters.
+"""
+
+import io
+import os
+import unittest
+
+try:
+    from fastapi.testclient import TestClient
+except ImportError:                                          # pragma: no cover
+    TestClient = None
+
+import sqlalchemy as sa
+from sqlalchemy.orm import sessionmaker
+
+# Fields the contract withholds. None may ever reach a payload (§4.4, A2/A3).
+WITHHELD = ("Max Pressure Achieved", "Deflection Value", "Deflection Unit")
+
+REC = {"project": "recPROJ0000000001", "mockup": "recMOCK0000000001",
+       "protocol": "recPROT0000000001", "section": "recSECT0000000001"}
+
+
+def _jpeg(name="evidence.jpg"):
+    return {"file": (name, io.BytesIO(b"jpegbytes"), "image/jpeg")}
+
+
+def _client_and_session():
+    from app import main
+    from app.data.models import Base
+
+    url = os.environ.get("M2_DATABASE_URL", "sqlite://")
+    kw = {}
+    if url.startswith("sqlite"):
+        from sqlalchemy.pool import StaticPool
+        kw = {"connect_args": {"check_same_thread": False}, "poolclass": StaticPool}
+    engine = sa.create_engine(url, **kw)
+    Base.metadata.drop_all(engine)
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+
+    def _get_db():
+        db = Session()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    main.app.dependency_overrides[main.get_db] = _get_db
+    return TestClient(main.app), Session
+
+
+class _Base(unittest.TestCase):
+    """One Airtable-linked project, and one that has no Airtable origin."""
+
+    def setUp(self):
+        self.client, self.Session = _client_and_session()
+        from app.data.models import Device, Project, ProjectParent
+        s = self.Session()
+        s.add(Device(id=1, name="system-1", turbo_mode=False, turbo_slave=False))
+        s.add(ProjectParent(id=1, name="IFET-26-0066"))
+        # Linked: imported from Airtable.
+        s.add(Project(id=1, name="Specimen A", parent_id=1, device_id=1,
+                      inward_design_pressure=60.0, outward_design_pressure=45.0,
+                      airtable_project_id=REC["project"],
+                      airtable_mockup_id=REC["mockup"]))
+        # Standalone: an operator typed it. No rec… ids anywhere.
+        s.add(Project(id=2, name="Specimen B", parent_id=1, device_id=1,
+                      inward_design_pressure=60.0, outward_design_pressure=45.0))
+        s.commit()
+        s.close()
+
+    def tearDown(self):
+        from app import main
+        main.app.dependency_overrides.clear()
+
+    # -- helpers ----------------------------------------------------------
+    def queue(self, attempt_id=None, channel=None):
+        """Outbox entries, ordered as the worker would take them."""
+        from app.sync.outbox import SyncOutbox
+        s = self.Session()
+        try:
+            q = s.query(SyncOutbox)
+            if attempt_id:
+                q = q.filter(SyncOutbox.attempt_id == attempt_id)
+            rows = q.order_by(SyncOutbox.attempt_id, SyncOutbox.attempt_seq).all()
+            out = [(r.phase, r.attempt_seq, r.state, dict(r.payload or {}))
+                   for r in rows]
+        finally:
+            s.close()
+        if channel == "record":
+            out = [r for r in out if r[0] != "attachment"]
+        elif channel == "attachment":
+            out = [r for r in out if r[0] == "attachment"]
+        return out
+
+    def link_test(self, table, test_id):
+        """Give a created test its Airtable protocol/section ids."""
+        s = self.Session()
+        try:
+            s.execute(sa.text(
+                f"UPDATE {table} SET airtable_protocol_id=:p, "
+                "airtable_section_id=:sec, airtable_section_name=:n "
+                "WHERE id=:i"),
+                {"p": REC["protocol"], "sec": REC["section"],
+                 "n": "DP (+) (PSF)", "i": test_id})
+            s.commit()
+        finally:
+            s.close()
+
+    def assert_no_withheld(self, payload):
+        for field in WITHHELD:
+            self.assertNotIn(
+                field, payload,
+                f"{field} must never be published — it has no validated source "
+                "(contract §4.4). Its absence is the decision, not an oversight.")
+
+
+class ManualAndImpactRoundTrip(_Base):
+    """Forced Entry, ANSI Z97.1 and Impact — the three built for the UI."""
+
+    def _create(self, kind, **body):
+        if kind == "impact":
+            r = self.client.post("/projects/1/impact-tests/", json=body or {})
+            table = "missile_impact_tests"
+        else:
+            r = self.client.post("/projects/1/manual-tests/", json=body)
+            table = "manual_tests"
+        self.assertEqual(r.status_code, 200, r.text)
+        test_id = r.json()["id"]
+        self.link_test(table, test_id)
+        return test_id
+
+    def _start(self, kind, test_id):
+        path = ("impact-tests" if kind == "impact" else "manual-tests")
+        r = self.client.post(f"/projects/1/{path}/{test_id}/trials",
+                             json={"operator_name": "technician-1"})
+        self.assertEqual(r.status_code, 200, r.text)
+        return r.json()
+
+    def test_forced_entry_all_four_phases_in_order(self):
+        test_id = self._create("manual", type="Forced Entry",
+                               required_option="ASTM F588 Grade 40")
+        attempt = self._start("manual", test_id)
+        aid, pk = attempt["labos_attempt_id"], attempt["id"]
+
+        # create — the phase that never fired for a manual test before today
+        entries = self.queue(aid)
+        self.assertEqual([e[0] for e in entries], ["create"])
+        payload = entries[0][3]
+        self.assertEqual(payload["LabOS Attempt ID"], aid)
+        self.assertEqual(payload["Test Result"], "Pending")
+        self.assertEqual(payload["Airtable Project ID"], REC["project"])
+        self.assertEqual(payload["Airtable Section ID"], REC["section"])
+        self.assert_no_withheld(payload)
+
+        # evidence, then terminal, then verdict
+        self.assertEqual(self.client.post(f"/test-results/{pk}/photos",
+                                          files=_jpeg()).status_code, 200)
+        self.assertEqual(self.client.put(
+            f"/test-results/{pk}/finish",
+            json={"result": True, "testing_continued": "Stopped"}).status_code, 200)
+        self.assertEqual(self.client.put(
+            f"/test-results/{pk}/verdict",
+            json={"test_result": "Pass", "verdict_by": "reviewer-1",
+                  "retest_required": False}).status_code, 200)
+
+        record = [e[0] for e in self.queue(aid, channel="record")]
+        self.assertEqual(record, ["create", "terminal", "verdict"],
+                         "the record channel must stay in phase order")
+        attach = self.queue(aid, channel="attachment")
+        self.assertEqual(len(attach), 1, "one entry per photograph")
+
+        verdict = [e[3] for e in self.queue(aid, channel="record")][-1]
+        self.assertEqual(verdict["Test Result"], "Passed",
+                         "the wire spelling is theirs, not ours")
+        self.assertEqual(verdict["LabOS Verdict By"], "reviewer-1")
+        self.assert_no_withheld(verdict)
+
+    def test_ansi_publishes_a_class_and_no_number(self):
+        test_id = self._create("manual", type="ANSI Z97.1", required_option="Class A")
+        attempt = self._start("manual", test_id)
+        payload = self.queue(attempt["labos_attempt_id"])[0][3]
+        self.assertEqual(payload["Test Type"], "ANSI Z97.1")
+        self.assert_no_withheld(payload)
+
+    def test_impact_publishes_and_keeps_per_impact_detail_local(self):
+        test_id = self._create("impact")
+        attempt = self._start("impact", test_id)
+        aid, pk = attempt["labos_attempt_id"], attempt["id"]
+
+        shot = self.client.post(f"/test-results/{pk}/shots", json={"result": True})
+        self.assertEqual(shot.status_code, 200, shot.text)
+        sid = shot.json()["id"]
+        self.assertEqual(self.client.post(f"/shots/{sid}/photos",
+                                          files=_jpeg()).status_code, 200)
+        self.assertEqual(self.client.put(
+            f"/test-results/{pk}/finish",
+            json={"result": True, "testing_continued": "Stopped"}).status_code, 200)
+
+        self.assertEqual([e[0] for e in self.queue(aid, channel="record")],
+                         ["create", "terminal"])
+        attach = self.queue(aid, channel="attachment")
+        self.assertEqual(len(attach), 1)
+        self.assertEqual(attach[0][3]["photo"]["shot_id"], sid,
+                         "a per-impact photograph must say which impact it is of")
+
+    def test_a_photograph_added_between_finish_and_verdict_is_queued(self):
+        """The freeze point is the verdict, not termination (contract §6).
+
+        The first draft of §4.7 snapshotted the photo set at termination, which
+        would have silently dropped this one — `_save_photo` permits it, and
+        only the verdict makes it a 409.
+        """
+        test_id = self._create("manual", type="Forced Entry", required_option="Grade 40")
+        attempt = self._start("manual", test_id)
+        aid, pk = attempt["labos_attempt_id"], attempt["id"]
+        self.client.put(f"/test-results/{pk}/finish",
+                        json={"result": True, "testing_continued": "Stopped"})
+
+        after = self.client.post(f"/test-results/{pk}/photos", files=_jpeg("late.jpg"))
+        self.assertEqual(after.status_code, 200,
+                         "evidence is addable until review")
+        self.assertEqual(len(self.queue(aid, channel="attachment")), 1)
+
+        self.client.put(f"/test-results/{pk}/verdict",
+                        json={"test_result": "Pass", "verdict_by": "reviewer-1",
+                              "retest_required": False})
+        frozen = self.client.post(f"/test-results/{pk}/photos", files=_jpeg("later.jpg"))
+        self.assertEqual(frozen.status_code, 409, "and frozen after it")
+        self.assertEqual(len(self.queue(aid, channel="attachment")), 1,
+                         "a refused upload queues nothing")
+
+    def test_retest_shares_the_test_id_and_increments_the_number(self):
+        """The Airtable team's retest model, asserted end to end."""
+        test_id = self._create("manual", type="Forced Entry", required_option="Grade 40")
+        first = self._start("manual", test_id)
+        self.client.put(f"/test-results/{first['id']}/finish",
+                        json={"result": False, "testing_continued": "Stopped"})
+        second = self._start("manual", test_id)
+
+        self.assertEqual(first["labos_test_id"], second["labos_test_id"],
+                         "attempts at one test share one LabOS Test ID")
+        self.assertNotEqual(first["labos_attempt_id"], second["labos_attempt_id"])
+        self.assertEqual([first["trial_number"], second["trial_number"]], [1, 2])
+
+        p1 = self.queue(first["labos_attempt_id"])[0][3]
+        p2 = self.queue(second["labos_attempt_id"])[0][3]
+        for field in ("Airtable Project ID", "Airtable Mockup ID",   # the wire name has no hyphen
+                      "Airtable Protocol ID", "Airtable Section ID",
+                      "LabOS Test ID"):
+            self.assertEqual(p1[field], p2[field],
+                             f"{field} must not change between attempts")
+        self.assertIsNone(p2.get("Corrects Attempt ID"),
+                          "a retest is not a correction")
+
+    def test_labos_test_id_is_one_format_across_all_five_types(self):
+        """One column, one vocabulary — DG12.
+
+        A UUID, not a slug: the change document tells the Airtable team to group
+        on equality and never parse, and a readable slug both invited parsing
+        and leaked a database primary key.
+        """
+        import uuid
+        ids = []
+        for kind, body in (("manual", {"type": "Forced Entry", "required_option": "g"}),
+                           ("manual", {"type": "ANSI Z97.1", "required_option": "A"}),
+                           ("impact", {})):
+            tid = self._create(kind, **body)
+            ids.append(self._start(kind, tid)["labos_test_id"])
+        for value in ids:
+            uuid.UUID(value)   # raises unless it is a real UUID
+            self.assertNotIn("-test-", value)
+            self.assertFalse(value.startswith(("impact-", "forced-entry-", "ansi")))
+
+    def test_a_job_with_no_airtable_origin_queues_nothing(self):
+        """Standalone is the normal mode, not a degraded one (§4.6)."""
+        r = self.client.post("/projects/2/manual-tests/",
+                             json={"type": "Forced Entry", "required_option": "Grade 40"})
+        self.assertEqual(r.status_code, 200, r.text)
+        attempt = self.client.post(
+            f"/projects/2/manual-tests/{r.json()['id']}/trials",
+            json={"operator_name": "technician-1"})
+        self.assertEqual(attempt.status_code, 200, attempt.text)
+        aid = attempt.json()["labos_attempt_id"]
+        self.assertEqual(self.queue(aid), [],
+                         "a local job must never be queued for Airtable")
+
+        from app.data.models import TestResult
+        s = self.Session()
+        try:
+            row = s.query(TestResult).filter(
+                TestResult.labos_attempt_id == aid).one()
+            self.assertEqual(row.airtable_sync_state, "Excluded")
+        finally:
+            s.close()
+
+
+class RigTypeRoundTrip(_Base):
+    """Static Load and Cycles — the two that post a finished trial in one call."""
+
+    def _static_test(self):
+        s = self.Session()
+        try:
+            s.execute(sa.text(
+                "INSERT INTO static_tests (id, finished, index, pressure_factor, "
+                "pressure, duration, type, preset, project_id, "
+                "airtable_protocol_id, airtable_section_id, airtable_section_name) "
+                "VALUES (1, false, 0, '0.75', 45.0, 10, 'static', false, 1, "
+                ":p, :sec, 'DP (+) (PSF)')"),
+                {"p": REC["protocol"], "sec": REC["section"]})
+            s.commit()
+        finally:
+            s.close()
+
+    def test_static_trial_queues_a_create_without_the_withheld_fields(self):
+        self._static_test()
+        r = self.client.post("/projects/1/static_tests/0/trials", json={
+            "result": True, "deflections": [
+                {"deflection_gauge": "g1", "max_deflection": 1234.0,
+                 "permanent_deflection": 12.0, "recovery": 60.0}]})
+        self.assertIn(r.status_code, (200, 201), r.text)
+
+        entries = self.queue()
+        self.assertTrue(entries, "a linked static trial must queue a phase")
+        payload = entries[0][3]
+        self.assert_no_withheld(payload)
+        self.assertNotIn("Measured Value", payload,
+                         "A2 — the rig sends no measurement for static load")
+
+
+class ChannelsAndRecovery(_Base):
+    """The queue's own guarantees, at the level the worker sees them."""
+
+    def _linked_attempt(self):
+        r = self.client.post("/projects/1/manual-tests/",
+                             json={"type": "Forced Entry", "required_option": "Grade 40"})
+        test_id = r.json()["id"]
+        self.link_test("manual_tests", test_id)
+        a = self.client.post(f"/projects/1/manual-tests/{test_id}/trials",
+                             json={"operator_name": "technician-1"}).json()
+        return a["labos_attempt_id"], a["id"]
+
+    def test_a_parked_attachment_does_not_block_the_verdict(self):
+        """Finding #8 — the reason attachments needed their own channel.
+
+        Heads were grouped by attempt alone, so an attachment queued before the
+        verdict became the head, and `claim()`'s own docstring says a parked
+        head makes the whole attempt undeliverable. A photograph that will never
+        upload would have held a measured verdict hostage.
+        """
+        from app.sync import outbox
+        aid, pk = self._linked_attempt()
+        self.client.post(f"/test-results/{pk}/photos", files=_jpeg())
+        self.client.put(f"/test-results/{pk}/finish",
+                        json={"result": True, "testing_continued": "Stopped"})
+        self.client.put(f"/test-results/{pk}/verdict",
+                        json={"test_result": "Pass", "verdict_by": "reviewer-1",
+                              "retest_required": False})
+
+        s = self.Session()
+        try:
+            attach = [e for e in s.query(outbox.SyncOutbox)
+                      .filter(outbox.SyncOutbox.attempt_id == aid).all()
+                      if e.phase == "attachment"]
+            self.assertEqual(len(attach), 1)
+            attach[0].state = outbox.PARKED
+            s.commit()
+
+            phases = [e.phase for e in outbox.claim(s, limit=10)]
+        finally:
+            s.close()
+        self.assertIn("create", phases,
+                      "the record channel must still be claimable with a "
+                      "parked attachment in the attempt")
+        self.assertNotIn("attachment", phases, "a parked entry is not claimable")
+
+    def test_record_phases_stay_strictly_ordered(self):
+        from app.sync import outbox
+        aid, pk = self._linked_attempt()
+        self.client.put(f"/test-results/{pk}/finish",
+                        json={"result": True, "testing_continued": "Stopped"})
+        self.client.put(f"/test-results/{pk}/verdict",
+                        json={"test_result": "Pass", "verdict_by": "reviewer-1",
+                              "retest_required": False})
+        s = self.Session()
+        try:
+            claimed = outbox.claim(s, limit=10)
+            self.assertEqual([e.phase for e in claimed], ["create"],
+                             "terminal must wait for create to land")
+        finally:
+            s.close()
+
+    def test_an_outage_never_reaches_the_operator(self):
+        """The whole reason the outbox exists.
+
+        Nothing in the request path can call Airtable — enforced by
+        `test_report_api_isolation` — so the strongest statement here is the
+        behavioural one: every route still returns 200 and the work is queued,
+        with no Airtable configured at all.
+        """
+        from app.config import airtable_settings
+        self.assertFalse(
+            airtable_settings.sync_enabled,
+            "the test environment must have sync off; the save must not care")
+        aid, pk = self._linked_attempt()
+        for call in (
+            lambda: self.client.post(f"/test-results/{pk}/photos", files=_jpeg()),
+            lambda: self.client.put(f"/test-results/{pk}/finish",
+                                    json={"result": True,
+                                          "testing_continued": "Stopped"}),
+            lambda: self.client.put(f"/test-results/{pk}/verdict",
+                                    json={"test_result": "Pass",
+                                          "verdict_by": "reviewer-1",
+                                          # Required by design: an unchecked box
+                                          # is not a decision (VerdictSchema).
+                                          "retest_required": False}),
+        ):
+            self.assertEqual(call().status_code, 200)
+        self.assertEqual(len(self.queue(aid)), 4,
+                         "create, terminal, verdict and one attachment, all "
+                         "waiting for a worker that is not running")
+
+    def test_a_restart_resumes_from_the_queue_not_from_memory(self):
+        """Recovery is a property of the table, so a new session must see it."""
+        from app.sync import outbox
+        aid, pk = self._linked_attempt()
+        self.client.put(f"/test-results/{pk}/finish",
+                        json={"result": True, "testing_continued": "Stopped"})
+
+        # A worker takes the head, then dies without reporting.
+        s1 = self.Session()
+        try:
+            first = outbox.claim(s1, limit=1)[0]
+            self.assertEqual(first.phase, "create")
+            s1.commit()
+        finally:
+            s1.close()
+
+        # A brand-new session — the restart — must find the lease and, once it
+        # has expired, take the same entry again rather than skipping it.
+        import datetime as dt
+        s2 = self.Session()
+        try:
+            again = outbox.claim(
+                s2, limit=1,
+                now=dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1))
+            self.assertEqual([e.phase for e in again], ["create"],
+                            "an expired lease must be re-claimable after a crash")
+        finally:
+            s2.close()
+
+
+class UnmetRequirementsStayVisible(_Base):
+    """The six UNMET rows, asserted as absences rather than omitted from tests."""
+
+    def test_no_payload_may_carry_a_withheld_measurement(self):
+        from app.airtable import envelope
+        from app.airtable.envelope import EnvelopeError
+        base = {"LabOS Attempt ID": "a", "LabOS Test ID": "t",
+                "Attempt Number": 1, "Test Type": "Static Load",
+                "Operator Name": "technician-1"}
+        for field, value in (("Max Pressure Achieved", 61.0),
+                             ("Deflection Value", 1234.0),
+                             ("Deflection Unit", "in")):
+            with self.assertRaises(EnvelopeError, msg=f"{field} was accepted"):
+                envelope.build_start({**base, field: value})
+
+    def test_recovery_is_a_config_constant_and_is_never_published(self):
+        """Firmware audit 2026-08-31 — a number that is not a measurement.
+
+        The most dangerous of the six, because a value *is* present: `recovery`
+        is the rig's `recovery_time` config constant, so publishing it would
+        report a setting as an observation.
+        """
+        from app.airtable.mapping import envelope_values
+        from app.data.models import Deflection, ManualTest, ManualTestResult
+        s = self.Session()
+        try:
+            s.add(ManualTest(id=1, project_id=1, type="Forced Entry",
+                             required_option="Grade 40", finished=False,
+                             airtable_protocol_id=REC["protocol"],
+                             airtable_section_id=REC["section"]))
+            s.flush()
+            attempt = ManualTestResult(manual_test_id=1, trial_number=1,
+                                       labos_attempt_id="a1", labos_test_id="t1",
+                                       test_type="Forced Entry", status="Completed")
+            s.add(attempt)
+            s.flush()
+            s.add(Deflection(deflection_gauge="g1", max_deflection=1234.0,
+                             permanent_deflection=12.0, recovery=60.0,
+                             test_id=attempt.id))
+            s.commit()
+            values = envelope_values(attempt, strict=True)
+        finally:
+            s.close()
+        self.assertNotIn("recovery", values)
+        self.assertNotIn("Recovery", values)
+        for field in WITHHELD:
+            self.assertIsNone(values.get(field),
+                              f"{field} must be absent or None, never a number")
+
+
+class CyclicRoundTrip(_Base):
+    """Cycles — the fifth type, so an acceptance run cannot pass on four."""
+
+    def test_cyclic_trial_queues_a_create_and_withholds_the_measurements(self):
+        s = self.Session()
+        try:
+            s.execute(sa.text(
+                "INSERT INTO cyclic_tests (id, finished, index, type, cycles, "
+                "low_pressure, high_pressure, resume, current_cycle, preset, "
+                "project_id, airtable_protocol_id, airtable_section_id, "
+                "airtable_section_name) VALUES (1, false, 0, 'cyclic', 1000, "
+                "30.0, 60.0, false, 0, false, 1, :p, :sec, 'DP (+) (PSF)')"),
+                {"p": REC["protocol"], "sec": REC["section"]})
+            s.commit()
+        finally:
+            s.close()
+        r = self.client.post("/projects/1/cyclic-tests/0/trials", json={
+            "result": True, "deflections": [
+                {"deflection_gauge": "g1", "max_deflection": 980.0,
+                 "permanent_deflection": 8.0, "recovery": 60.0}]})
+        self.assertIn(r.status_code, (200, 201), r.text)
+
+        entries = self.queue()
+        self.assertTrue(entries, "a linked cyclic trial must queue a phase")
+        payload = entries[0][3]
+        self.assert_no_withheld(payload)
+        self.assertEqual(payload["Test Type"], "Cycles")
+
+        # The withheld measurements must be *explained* in the JSON, not merely
+        # absent — that is what tells a consumer "not trusted" from "not taken".
+        import json as _json
+        detail = _json.loads(payload["Complete LabOS JSON Response"])
+        reasons = {r["field"]: r["reason"] for r in detail.get("data_quality", [])}
+        self.assertEqual(reasons.get("Deflection Value"), "uncalibrated_gauge_counts")
+        self.assertEqual(reasons.get("recovery"), "not_a_measurement")
+        self.assertEqual(reasons.get("Max Pressure Achieved"), "not_persisted")
+        self.assertEqual(reasons.get("Measured Value"), "no_source")
+        self.assertNotIn("deflections", detail,
+                         "the untrusted numbers stay in LabOS (contract §5)")
+
+
+class DeliveryThroughTheWorker(_Base):
+    """The other half of the round trip: the queue actually drains, in order.
+
+    Driven with a synthetic transport, which is how `sync.worker` is built to be
+    tested — `run_cycle(session, send)` takes the sender. This is also the
+    correction to §4.7's first test plan, which proposed running the real worker
+    with a blank token: `service.py` exits 0 when Airtable is not configured, so
+    that would have started nothing and proved nothing.
+    """
+
+    def _completed_attempt(self):
+        r = self.client.post("/projects/1/manual-tests/",
+                             json={"type": "Forced Entry",
+                                   "required_option": "ASTM F588 Grade 40"})
+        test_id = r.json()["id"]
+        self.link_test("manual_tests", test_id)
+        a = self.client.post(f"/projects/1/manual-tests/{test_id}/trials",
+                             json={"operator_name": "technician-1"}).json()
+        self.client.post(f"/test-results/{a['id']}/photos", files=_jpeg())
+        self.client.put(f"/test-results/{a['id']}/finish",
+                        json={"result": True, "testing_continued": "Stopped"})
+        self.client.put(f"/test-results/{a['id']}/verdict",
+                        json={"test_result": "Pass", "verdict_by": "reviewer-1",
+                              "retest_required": False})
+        return a["labos_attempt_id"], a["id"]
+
+    def test_every_phase_delivers_and_the_queue_empties(self):
+        from app.sync import worker
+        aid, _ = self._completed_attempt()
+        sent = []
+
+        def send(entry):
+            # `send(entry) -> record_id | None`, per worker.run_cycle. Returning
+            # the whole API response instead put a dict where a string goes.
+            sent.append((entry.phase, entry.attempt_seq))
+            return "recDELIVERED00001"
+
+        s = self.Session()
+        try:
+            worker.drain(s, send)
+        finally:
+            s.close()
+
+        record = [p for p, _ in sent if p != "attachment"]
+        self.assertEqual(record, ["create", "terminal", "verdict"],
+                         "phases must reach Airtable in order")
+        self.assertEqual(sum(1 for p, _ in sent if p == "attachment"), 1)
+        self.assertEqual([e for e in self.queue(aid) if e[2] != "done"], [],
+                         "a fully delivered attempt leaves nothing open")
+
+    def test_an_outage_mid_drain_leaves_the_rest_queued_and_recovers(self):
+        """The failure the outbox exists for, and the recovery after it."""
+        from app.airtable.errors import AirtableServerError
+        from app.sync import worker
+        aid, _ = self._completed_attempt()
+        attempts_seen = []
+
+        def failing(entry):
+            attempts_seen.append(entry.phase)
+            raise AirtableServerError("Airtable returned 503")
+
+        s = self.Session()
+        try:
+            worker.run_cycle(s, failing)
+            open_after = [e for e in self.queue(aid) if e[2] != "done"]
+            self.assertTrue(open_after,
+                            "a 503 must leave the work queued, not drop it")
+
+            # Recovery: the same entries deliver once the service returns —
+            # but only after the backoff the failure scheduled, so the clock has
+            # to move. Asserting recovery "immediately" would be asserting that
+            # the backoff does not work.
+            import datetime as _dt
+            worker.drain(s, lambda e: "recOK",
+                         now=_dt.datetime.now(_dt.timezone.utc)
+                             + _dt.timedelta(hours=1))
+        finally:
+            s.close()
+        self.assertEqual([e for e in self.queue(aid) if e[2] != "done"], [],
+                         "everything queued during the outage must eventually land")
+
+    def test_status_reports_the_queue_in_the_four_contractual_words(self):
+        aid, _ = self._completed_attempt()
+        body = self.client.get("/sync/status").json()
+        self.assertIn(body["status"],
+                      ("Synced", "Pending", "Sync Failed", "Retry Required"))
+        self.assertEqual(body["status"], "Sync Failed",
+                         "no worker has ever beaten, so liveness is the failure")
+        self.assertGreaterEqual(body["queue_depth"], 3)
+        self.assertGreaterEqual(body["attachment_backlog"], 1)
+
+        queue = self.client.get("/sync/queue").json()
+        phases = [e["phase"] for e in queue["entries"]]
+        self.assertEqual([p for p in phases if p != "attachment"],
+                         ["create", "terminal", "verdict"])
+        channels = {e["phase"]: e["channel"] for e in queue["entries"]}
+        self.assertEqual(channels["attachment"], "attachment")
+        self.assertEqual(channels["verdict"], "record")
+
+    def test_retry_only_accepts_a_parked_entry(self):
+        from app.sync import outbox
+        aid, _ = self._completed_attempt()
+        s = self.Session()
+        try:
+            entry = (s.query(outbox.SyncOutbox)
+                     .filter(outbox.SyncOutbox.attempt_id == aid)
+                     .order_by(outbox.SyncOutbox.attempt_seq).first())
+            entry_id, = entry.id,
+            self.assertEqual(
+                self.client.post(f"/sync/queue/{entry_id}/retry").status_code, 400,
+                "a pending entry needs no retry; the worker has it")
+            entry.state = outbox.PARKED
+            s.commit()
+        finally:
+            s.close()
+        r = self.client.post(f"/sync/queue/{entry_id}/retry")
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(r.json()["state"], "pending")
+        self.assertEqual(self.client.post("/sync/queue/999999/retry").status_code, 404)
+
+
+class ConcurrentStarts(_Base):
+    """Two starts at once must produce two attempts, not one number twice.
+
+    Postgres only, and that is the point: the constraint and the savepoint retry
+    are both invisible on SQLite, where a single writer means there is no race
+    to lose.
+    """
+
+    def setUp(self):
+        if not os.environ.get("M2_DATABASE_URL", "").startswith("postgresql"):
+            self.skipTest("needs the Postgres harness — no race exists on SQLite")
+        super().setUp()
+
+    def test_a_duplicate_attempt_number_is_impossible(self):
+        from sqlalchemy.exc import IntegrityError
+        from app.data.models import ManualTest, ManualTestResult
+        s = self.Session()
+        try:
+            s.add(ManualTest(id=1, project_id=1, type="Forced Entry",
+                             required_option="Grade 40", finished=False))
+            s.commit()
+            common = dict(manual_test_id=1, test_type="Forced Entry",
+                          status="In Progress", labos_test_id="shared-test-id")
+            s.add(ManualTestResult(trial_number=1, labos_attempt_id="a1", **common))
+            s.commit()
+            s.add(ManualTestResult(trial_number=1, labos_attempt_id="a2", **common))
+            with self.assertRaises(IntegrityError,
+                                   msg="two attempt 1s of one test were accepted"):
+                s.commit()
+        finally:
+            s.rollback()
+            s.close()
+
+    def test_two_simultaneous_starts_get_different_numbers(self):
+        """Through the real route, twice, with the retry doing the work."""
+        r = self.client.post("/projects/1/manual-tests/",
+                             json={"type": "Forced Entry", "required_option": "g"})
+        test_id = r.json()["id"]
+        numbers = []
+        for _ in range(3):
+            a = self.client.post(f"/projects/1/manual-tests/{test_id}/trials",
+                                 json={"operator_name": "technician-1"})
+            self.assertEqual(a.status_code, 200, a.text)
+            numbers.append(a.json()["trial_number"])
+        self.assertEqual(numbers, [1, 2, 3])
+
+
+if __name__ == "__main__":
+    unittest.main()

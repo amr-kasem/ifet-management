@@ -8,6 +8,13 @@ from sqlalchemy.orm import sessionmaker, Session
 from app.data.models import *
 from app.data.schema import *
 from app.data import attempts
+# The transactional-outbox seam. Persistence and payload only — it cannot
+# open a socket, which `tests/test_report_api_isolation.py` enforces.
+from app.sync import publish
+# Local status reads only — `state` and `outbox` are persistence, not transport.
+from app.sync import outbox as outbox_mod
+from app.sync import state as sync_state
+from app.sync.outbox import SyncOutbox
 from app.domain.cyclic_test_pressure_calculator import CyclicTestPressureCalculator
 from app.domain.static_test_pressure_calculator import StaticTestPressureCalculator
 import logging
@@ -418,7 +425,7 @@ def create_static_test_trial(project_id: int, static_test_index: int, trial_data
         )
 
     new_trial = attempts.insert_attempt(db, _build_trial)
-    db.flush()  # Flush to get the new ID without committing
+    db.flush()  # the attempt needs its id before its deflections
     
     for d in trial_data.deflections:
         new_deflection = Deflection(
@@ -429,7 +436,13 @@ def create_static_test_trial(project_id: int, static_test_index: int, trial_data
             test_id=new_trial.id,
         )
         db.add(new_deflection)
-        
+
+    # Enqueued **after** the deflections, not before. The payload is a snapshot
+    # and the worker never re-derives it, so a phase queued mid-build would
+    # publish a row that never existed — here, one whose `data_quality` did not
+    # yet know a gauge had been read.
+    db.flush()
+    publish.record_phase(db, new_trial, publish.CREATE)
     db.commit()
     db.refresh(new_trial)
     return new_trial
@@ -605,8 +618,8 @@ def create_cyclic_test_trial(project_id: int, cyclic_test_index: int, trial_data
         )
 
     new_trial = attempts.insert_attempt(db, _build_trial)
-    db.flush()
-    
+    db.flush()  # the attempt needs its id before its deflections
+
     for d in trial_data.deflections:
         new_deflection = Deflection(
             deflection_gauge=d.deflection_gauge,
@@ -615,8 +628,14 @@ def create_cyclic_test_trial(project_id: int, cyclic_test_index: int, trial_data
             recovery=d.recovery,
             test_id=new_trial.id,
         )
-        db.add(new_deflection)  
-        
+        db.add(new_deflection)
+
+    # Enqueued **after** the deflections, not before. The payload is a snapshot
+    # and the worker never re-derives it, so a phase queued mid-build would
+    # publish a row that never existed — here, one whose `data_quality` did not
+    # yet know a gauge had been read.
+    db.flush()
+    publish.record_phase(db, new_trial, publish.CREATE)
     db.commit()
     db.refresh(new_trial)
     return new_trial
@@ -1298,12 +1317,21 @@ def _start_attempt(db, cls, test, test_type, operator_name, **link):
             operator_name=operator_name,
             testing_start_date=_utcnow(),
             labos_test_id=test_id,
+            # Contract §4.1 puts both of these in the always-required set, so
+            # the create payload is refused without them. `attempts.begin()`
+            # stamps them on the static and cyclic paths; this path builds its
+            # own object and did not, which the acceptance suite caught the
+            # first time a manual attempt was actually queued.
+            labos_created_at=_utcnow(),
+            labos_updated_at=_utcnow(),
             schema_version=None,
             **link,
         )
 
     attempt = attempts.insert_attempt(db, build)
-    db.commit()
+    db.flush()   # the attempt needs its identity before it can be queued
+    publish.record_phase(db, attempt, publish.CREATE)
+    db.commit()  # attempt + queue entry, one transaction (contract §4)
     db.refresh(attempt)
     return attempt
 
@@ -1512,6 +1540,11 @@ def finish_attempt(test_result_id: int, body: AttemptFinishSchema,
     attempt.testing_continued = body.testing_continued
     attempt.testing_end_date = _utcnow()
     attempt.terminal_at = _utcnow()
+    # The revision time this phase's payload is stamped with, so the queue entry
+    # and the record it describes agree about when it changed.
+    attempt.labos_updated_at = _utcnow()
+    db.flush()
+    publish.record_phase(db, attempt, publish.TERMINAL)
     db.commit()
     db.refresh(attempt)
     return attempt
@@ -1547,9 +1580,101 @@ def review_attempt(test_result_id: int, body: VerdictSchema,
     attempt.retest_required = body.retest_required
     if body.rationale:
         attempt.result_rationale = body.rationale
+    attempt.labos_updated_at = _utcnow()
+    db.flush()
+    publish.record_phase(db, attempt, publish.VERDICT)
     db.commit()
     db.refresh(attempt)
     return attempt
+
+
+# ---------------------------------------------------------------------------
+# Sync status — delivery plan §4.2 and §4.7.
+#
+# Three routes over functions that already existed and were unrouted:
+# `sync.state.status()` was documented as "the payload behind GET /sync/status"
+# and `outbox.resume()` as "the manual half of POST /sync/queue/{id}/retry",
+# with nothing serving either. That mattered beyond tidiness — DG6 justified
+# giving the worker container no health check on the grounds that liveness is
+# the heartbeat row `report-api` serves, so until these existed the worker had
+# no liveness surface at all.
+#
+# **All three are local reads.** They compute from `sync_outbox` and
+# `sync_state` at request time and never call Airtable, which is what makes
+# them safe to poll from an operator's screen during an outage: the status of a
+# stalled queue must be visible precisely when Airtable is unreachable.
+# `retry` re-enables eligibility and sends nothing itself.
+# ---------------------------------------------------------------------------
+
+@app.get("/sync/status")
+def sync_status(db: Session = Depends(get_db)):
+    """Queue health in the four contractual words, plus the worker heartbeat.
+
+    `status` is one of `Synced` · `Pending` · `Sync Failed` · `Retry Required`
+    — the Airtable team's own four words, which is why they are contractual
+    values and not our own vocabulary. `attachment_backlog` is counted
+    separately because evidence delivers on its own channel and a photograph
+    still in flight is not a result that failed.
+    """
+    return sync_state.status(db)
+
+
+@app.get("/sync/queue")
+def sync_queue(state: Optional[str] = None, limit: int = 100,
+               db: Session = Depends(get_db)):
+    """The queue itself — one row per pending write, oldest first.
+
+    Ordered by `(attempt_id, attempt_seq)` rather than by time, because the
+    ordering that matters is *within* an attempt: its phases merge onto one
+    Airtable record and must arrive in sequence. `?state=parked` is the useful
+    filter — those are the entries that will never clear on their own.
+    """
+    q = db.query(SyncOutbox)
+    if state:
+        q = q.filter(SyncOutbox.state == state)
+    entries = (q.order_by(SyncOutbox.attempt_id, SyncOutbox.attempt_seq)
+               .limit(min(limit, 500)).all())
+    return {
+        "count": len(entries),
+        "entries": [{
+            "id": e.id,
+            "attempt_id": e.attempt_id,
+            "attempt_seq": e.attempt_seq,
+            "phase": e.phase,
+            # Which of the attempt's two queues this is in. An attachment
+            # cannot block a record phase and vice versa.
+            "channel": "attachment" if e.phase == "attachment" else "record",
+            "state": e.state,
+            "attempts": e.attempts,
+            "next_attempt_at": e.next_attempt_at.isoformat() if e.next_attempt_at else None,
+            "last_error": e.last_error,
+        } for e in entries],
+    }
+
+
+@app.post("/sync/queue/{entry_id}/retry")
+def sync_retry(entry_id: int, db: Session = Depends(get_db)):
+    """Un-park one entry. Re-enables eligibility; sends nothing.
+
+    Deliberately not a send: the same single worker still owns delivery and
+    still applies the lease and the fencing token. A retry that pushed inline
+    from the request would be a second sender, which is the one thing §7.1's
+    mechanisms exist to prevent.
+    """
+    entry = db.query(SyncOutbox).filter(SyncOutbox.id == entry_id).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Queue entry not found")
+    if entry.state != "parked":
+        raise HTTPException(
+            status_code=400,
+            detail=f"This entry is {entry.state!r}, not parked. Only a parked "
+                   "entry needs a retry; the worker handles the rest.")
+    outbox_mod.resume(db, entry_id)
+    db.commit()
+    db.refresh(entry)
+    return {"id": entry.id, "state": entry.state,
+            "next_attempt_at": entry.next_attempt_at.isoformat()
+                               if entry.next_attempt_at else None}
 
 
 @app.post("/test-results/{test_result_id}/photos", response_model=PhotoSchema)
@@ -1638,6 +1763,12 @@ def _save_photo(db, upload, note, **owner):
     photo = TestPhoto(filename=upload.filename or stored, path=str(dest),
                       note=note, created_at=_utcnow(), **owner)
     db.add(photo)
+    db.flush()   # the photo needs its id before it can be queued
+    if attempt is not None:
+        # One entry per photograph, queued when the photograph is added —
+        # including one added legally between termination and review, which the
+        # 409 above permits until the verdict. See `sync.publish`.
+        publish.record_attachment(db, attempt, photo)
     db.commit()
     db.refresh(photo)
     return photo

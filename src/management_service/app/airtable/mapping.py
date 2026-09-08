@@ -45,6 +45,210 @@ def owning_test(attempt):
     return None
 
 
+def _impact_result(attempt):
+    """The one-line Impact summary contract §5.1 requires on a terminal write.
+
+    Derived from the numbered impacts rather than typed, because the operator
+    already recorded each impact's outcome and asking twice invites the two to
+    disagree. `attempt.impact_result` still wins if something set it.
+
+    Free text by design — `Impact Result` is `singleLineText` in their base and
+    the per-impact detail travels in the JSON, so this is the human-readable
+    summary a person scanning the base sees. It names the failing impacts
+    because "Fail" alone sends the reader to the JSON to learn which.
+
+    None when there are no impacts, which correctly refuses the terminal
+    payload: an Impact attempt cannot be completed without at least one impact,
+    and the finish route enforces that before this is ever reached.
+    """
+    if attempt.test_type != C.IMPACT:
+        return None
+    shots = getattr(attempt, "shots", None) or []
+    if not shots:
+        return None
+    total = len(shots)
+    failed = sorted(sh.shot_number for sh in shots if sh.result is False)
+    if failed:
+        which = ", ".join(str(n) for n in failed)
+        return f"Fail - impact {which} of {total} did not resist"
+    unknown = [sh for sh in shots if sh.result is None]
+    if unknown:
+        # An impact with no recorded outcome is not a pass. Saying so is the
+        # §4.5 rule that missing data is never a pass, applied to the summary.
+        return f"Incomplete - {len(unknown)} of {total} impacts have no outcome"
+    return f"Pass - {total} of {total} impacts resisted"
+
+
+def _iso(value):
+    return value.isoformat() if value is not None else None
+
+
+def result_detail(attempt):
+    """The §6 detailed JSON body — everything Airtable has no column for.
+
+    **Built here, at enqueue time, and stored in the payload.** It is derived
+    data, so a column would have to be kept in step with the row it describes;
+    the outbox snapshots what the envelope produced and the worker never
+    re-derives it, which is exactly the guarantee that makes deriving it here
+    safe. `attempt.result_detail` still wins if something set it explicitly.
+
+    §6 names the contents: identity, `attempt_kind`, execution start/end,
+    requirements snapshot, procedure version, stage/observation detail, review
+    and `data_quality`. This is also the only route to Airtable for the nine
+    JSON-only fields of §10.15 — `Test Name`, `Abort Reason`, `Required Value`,
+    `Required Unit`, `Cycles Required`, `Cycles Completed`, `Test Rig`,
+    `LabOS Version` and `Result Rationale` — which have no scalar by decision.
+
+    **Quarantined measurements appear as `data_quality` reasons and never as
+    values** (§5: "send machine-readable data_quality reasons ... without
+    exporting the untrusted numbers"). Deflections are raw IO-Link counts, so
+    the JSON says a gauge was read and why the number is withheld. Publishing
+    them here would satisfy the letter of "we do not send Deflection Value"
+    while putting the same uncalibrated count somewhere nobody audits.
+    """
+    test = owning_test(attempt)
+    project = getattr(test, "project", None) if test is not None else None
+
+    detail = {
+        "schema": C.CONTRACT_VERSION,
+        "identity": {
+            "labos_test_id": attempt.labos_test_id,
+            "labos_attempt_id": attempt.labos_attempt_id,
+            "attempt_number": attempt.trial_number,
+            "airtable_project_id": getattr(project, "airtable_project_id", None),
+            "airtable_mockup_id": getattr(project, "airtable_mockup_id", None),
+            "airtable_protocol_id": getattr(test, "airtable_protocol_id", None),
+            "airtable_section_id": getattr(test, "airtable_section_id", None),
+            "identity_assurance": "declared",
+        },
+        # §4: a correction carries the original execution times and is not a
+        # physical test; a retest is `execution` with new ones.
+        "attempt_kind": "correction" if attempt.corrects_attempt_id else "execution",
+        "execution": {
+            "start": _iso(attempt.testing_start_date),
+            "end": _iso(attempt.testing_end_date),
+            "status": attempt.status,
+            "testing_continued": attempt.testing_continued,
+            "abort_reason": attempt.abort_reason,
+        },
+        "test": {
+            "type": attempt.test_type,
+            "name": attempt.test_name or getattr(test, "airtable_section_name", None),
+            "rig": getattr(project, "device_id", None),
+            "operator_name": attempt.operator_name,
+        },
+        "review": {
+            "test_result": attempt.test_result,
+            "verdict_by": attempt.verdict_by,
+            "verdict_at": _iso(attempt.verdict_at),
+            # Null until a review exists. Never inferred false (§6).
+            "retest_required": attempt.retest_required,
+            "rationale": getattr(attempt, "result_rationale", None),
+        },
+        "correction": {
+            "corrects_attempt_id": attempt.corrects_attempt_id,
+            "reason": attempt.correction_reason,
+        } if attempt.corrects_attempt_id else None,
+        "requirements": _requirements_snapshot(test, project),
+        "observations": _observations(attempt),
+        "data_quality": _data_quality(attempt),
+    }
+    return {k: v for k, v in detail.items() if v is not None}
+
+
+def _requirements_snapshot(test, project):
+    """What was required, as LabOS held it when the attempt ran.
+
+    **Not a programme snapshot**, because `test_programmes` does not exist yet
+    (business I/O reconciliation, 2026-09-08). This reads the live parent rows,
+    which is correct for a test that has just run and would be wrong for one
+    re-read years later — so it is marked `"source": "live"` rather than
+    presented as frozen. Replacing it with a real snapshot is TC1.
+    """
+    if project is None and test is None:
+        return None
+    snapshot = {
+        "source": "live",
+        "inward_design_pressure_psf": getattr(project, "inward_design_pressure", None),
+        "outward_design_pressure_psf": getattr(project, "outward_design_pressure", None),
+        "gauge_count": getattr(project, "gauge_count", None),
+        "impact_count": getattr(project, "impact_count", None),
+        # Per-type requirements, present only on the type that has them.
+        "required_option": getattr(test, "required_option", None),
+        "missile": getattr(test, "missile", None),
+        "missile_weight_lb": getattr(test, "missile_weight", None),
+        "cycles_required": getattr(test, "cycles", None),
+    }
+    return {k: v for k, v in snapshot.items() if v is not None}
+
+
+def _observations(attempt):
+    """Numbered impacts, each with its own outcome and evidence count.
+
+    Every numbered observation declares quantity, unit and source (§6). An
+    unavailable value is omitted rather than sent as null or zero.
+    """
+    shots = getattr(attempt, "shots", None) or []
+    if not shots:
+        return None
+    out = []
+    for shot in sorted(shots, key=lambda x: (x.shot_number or 0)):
+        item = {"shot_number": shot.shot_number, "result": shot.result,
+                "photograph_count": len(shot.photos or [])}
+        if shot.area is not None:
+            item["area"] = {"quantity": shot.area, "unit": "in2",
+                            "source": "operator"}
+        if shot.velocity is not None:
+            item["velocity"] = {"quantity": shot.velocity, "unit": "ft/s",
+                                "source": "operator"}
+        if shot.note:
+            item["note"] = shot.note
+        out.append(item)
+    return out
+
+
+def _data_quality(attempt):
+    """Why a measurement is absent — machine-readable, without the number.
+
+    One entry per withheld measurement, so a consumer can tell "not measured"
+    from "measured and not trusted". That distinction is the entire reason this
+    key exists: an empty `Deflection Value` alone cannot say which.
+    """
+    reasons = []
+    deflections = getattr(attempt, "deflections", None) or []
+    if deflections:
+        reasons.append({
+            "field": "Deflection Value",
+            "reason": "uncalibrated_gauge_counts",
+            "detail": (f"{len(deflections)} gauge(s) were read. The rigs return "
+                       "raw IO-Link counts with no calibration to a physical "
+                       "unit, so no deflection is published (A3). The counts are "
+                       "retained in LabOS."),
+        })
+        reasons.append({
+            "field": "recovery",
+            "reason": "not_a_measurement",
+            "detail": ("The rig's `recovery` value is the `recovery_time` "
+                       "configuration constant, not an observation, so it is "
+                       "never published as one."),
+        })
+    if attempt.test_type in (C.STATIC_LOAD, C.CYCLES):
+        reasons.append({
+            "field": "Max Pressure Achieved",
+            "reason": "not_persisted",
+            "detail": ("Actual pressure is present on the rig's telemetry bus "
+                       "but nothing subscribes to it and stores the maximum, so "
+                       "there is no value to publish."),
+        })
+        reasons.append({
+            "field": "Measured Value",
+            "reason": "no_source",
+            "detail": ("The rig reports no measurement for this test type; the "
+                       "setpoint is a target, not an achievement (A2)."),
+        })
+    return reasons or None
+
+
 def _deflection_value(attempt):
     """Largest gauge reading, unless an explicit column overrides it.
 
@@ -141,11 +345,11 @@ def envelope_values(attempt, *, strict=True):
         # publishing it that is refused.
         "Measured Value": attempt.measured_value,
         "Unit": attempt.unit,
-        "Impact Result": attempt.impact_result,
+        "Impact Result": attempt.impact_result or _impact_result(attempt),
         "Required Value": attempt.required_value,
         "Required Unit": attempt.required_unit,
         "Cycles Completed": attempt.cycles_completed,
-        "Result Detail (JSON)": attempt.result_detail,
+        "Result Detail (JSON)": attempt.result_detail or result_detail(attempt),
 
         # -- §4.5 timing, people, disposition ---------------------------------
         "Testing Start Date": attempt.testing_start_date,

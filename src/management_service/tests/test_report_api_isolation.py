@@ -50,6 +50,7 @@ TRANSPORT = (
 # construction. Each is transport-free by construction, which the third test
 # below verifies rather than assumes.
 PERSISTENCE_AND_PAYLOAD = (
+    "app.sync.publish",     # the seam main.py calls; must stay socket-free
     "app.sync.outbox",
     "app.sync.state",
     "app.airtable.envelope",
