@@ -1106,6 +1106,64 @@
         }
       }
     },
+    "/projects/{project_id}/static_tests/{static_test_index}/start": {
+      "put": {
+        "summary": "Start Static Test",
+        "description": "Declare who is running this static test, before any hardware moves.\n\nStatic had no start route at all, so there was nowhere to capture the\noperator \u2014 and the rig callback carries only `deflections`. That absence,\nnot the firmware, is why rig attempts could not be completed. See\n`a3d8e5c71f04`.\n\nOptional body, so an existing caller that starts a run without declaring an\noperator still works; the attempt is then completable only if the trial\ncallback carries one.",
+        "operationId": "start_static_test_projects__project_id__static_tests__static_test_index__start_put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "static_test_index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Static Test Index"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunStartSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaticTestSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/projects/{project_id}/cyclic_tests/{cyclic_test_index}/start": {
       "put": {
         "summary": "Start Cyclic Test",
@@ -1130,6 +1188,15 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RunStartSchema"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -2240,6 +2307,228 @@
         }
       }
     },
+    "/airtable/projects": {
+      "get": {
+        "summary": "Airtable Projects",
+        "description": "Jobs available to import, from the mirror.\n\n`mirrored_at` is returned per row because a stale mirror is a fact the\noperator may need: importing from a two-week-old mirror is legitimate, and\nknowing that it is two weeks old is what makes it a decision.",
+        "operationId": "airtable_projects_airtable_projects_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/airtable/projects/{record_id}/specimens": {
+      "get": {
+        "summary": "Airtable Specimens",
+        "operationId": "airtable_specimens_airtable_projects__record_id__specimens_get",
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Record Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/airtable/specimens/{record_id}/protocols": {
+      "get": {
+        "summary": "Airtable Protocols",
+        "operationId": "airtable_protocols_airtable_specimens__record_id__protocols_get",
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Record Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/airtable/protocols/{record_id}/sections": {
+      "get": {
+        "summary": "Airtable Sections",
+        "description": "The sections of one protocol, each with whether LabOS can execute it.\n\n`refused` carries the reason, because a section LabOS will not run is the\none thing the operator can actually fix \u2014 and a picker that simply omitted\nit would look identical to a protocol where every section was fine.",
+        "operationId": "airtable_sections_airtable_protocols__record_id__sections_get",
+        "parameters": [
+          {
+            "name": "record_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Record Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/airtable/refresh": {
+      "post": {
+        "summary": "Airtable Refresh",
+        "description": "Re-read the hierarchy into the mirror. **The only route that calls Airtable.**\n\nDeliberately separate from every read, so no request an operator makes can\nblock on Airtable. Idempotent: it updates rows in place and creates none on\na re-run, which is what makes a repeated import safe.\n\nThis is the one place `report-api` builds an Airtable client, and it is\nimported inside the function rather than at module scope \u2014 the isolation\ntest forbids the transport in the request path, and a refresh is the\nexplicit exception rather than a hole in the rule.",
+        "operationId": "airtable_refresh_airtable_refresh_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/airtable/import/plan": {
+      "post": {
+        "summary": "Airtable Import Plan",
+        "description": "What an import would do, without doing any of it.\n\nSeparate from the import so an operator sees the consequences first: which\nsections are executable, which are unconfirmed, and which are refused and\nwhy. An import that silently skipped a malformed section would look\nidentical to one where every section was fine.",
+        "operationId": "airtable_import_plan_airtable_import_plan_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportRequestSchema"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/airtable/import": {
+      "post": {
+        "summary": "Airtable Import",
+        "description": "Import a hierarchy as a LabOS project, once.\n\n**Goes through `create_project_for_device`** \u2014 the same function a typed\nproject goes through, called with pre-filled values instead of typed ones.\nNot a parallel create path: the six static and eight cyclic tests derived\nfrom the design pressures are exactly what would drift between two paths,\nand \u00a74.6 says standalone and synced are one form with the boxes empty or\nfilled.\n\n**Duplicate-safe on the mock-up record.** A repeated import returns the\nproject it already made. Re-importing after a refresh is a normal action,\nand answering it with a second set of tests against the same specimen would\nturn a refresh into duplicated certification work.",
+        "operationId": "airtable_import_airtable_import_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportRequestSchema"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/sync/status": {
       "get": {
         "summary": "Sync Status",
@@ -2287,6 +2576,61 @@
               "type": "integer",
               "default": 100,
               "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sync/failures": {
+      "get": {
+        "summary": "Sync Failures",
+        "description": "Payloads LabOS refused to queue \u2014 the failures with no queue entry.\n\nThese are invisible in `/sync/queue` by construction: they never got an\nentry. Until they were persisted, the headline status read `Synced` for an\nattempt that had never been published, and there was nothing to retry.\n\n`recoverable` records why it was refused *at the time*, and is advisory: a\npayload our own envelope rejected needs the defect fixed; an incomplete\nAirtable binding needs someone to bind the protocol and section. Neither is\npermanent, and repair re-checks rather than trusting the flag \u2014 so a result\nwhose job was bound later is still publishable, with its measurements and\nevidence intact.",
+        "operationId": "sync_failures_sync_failures_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/sync/failures/{failure_id}/repair": {
+      "post": {
+        "summary": "Sync Repair",
+        "description": "Rebuild and re-queue one refused phase. Sends nothing itself.\n\nRepair goes back through `publish.record_phase`, so the payload is built by\nthe same code the route would have used and is subject to the same envelope\nrules \u2014 a repair that bypassed them could queue exactly the payload that was\nrefused. If it is refused again, the failure row is updated with the new\nreason rather than resolved, and this returns 409: the defect is still there.\n\nRefused for a non-recoverable failure, because re-running it cannot help.",
+        "operationId": "sync_repair_sync_failures__failure_id__repair_post",
+        "parameters": [
+          {
+            "name": "failure_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Failure Id"
             }
           }
         ],
@@ -2932,13 +3276,58 @@
             },
             "type": "array",
             "title": "Deflections"
+          },
+          "operator_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operator Name"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "testing_continued": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Testing Continued"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
           }
         },
         "type": "object",
         "required": [
           "deflections"
         ],
-        "title": "CyclicTestResultCreateSchema"
+        "title": "CyclicTestResultCreateSchema",
+        "description": "As `StaticTestResultCreateSchema` \u2014 see its docstring for why these are\noptional and what happens when `operator_name` is absent."
       },
       "CyclicTestResultSchema": {
         "properties": {
@@ -2948,6 +3337,50 @@
             },
             "type": "array",
             "title": "Deflections"
+          },
+          "operator_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operator Name"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "testing_continued": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Testing Continued"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
           },
           "id": {
             "type": "integer",
@@ -2967,17 +3400,6 @@
               }
             ],
             "title": "Image Path"
-          },
-          "note": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Note"
           }
         },
         "type": "object",
@@ -3416,6 +3838,46 @@
         ],
         "title": "ImpactTestSchema"
       },
+      "ImportRequestSchema": {
+        "properties": {
+          "device_id": {
+            "type": "integer",
+            "title": "Device Id"
+          },
+          "project_record_id": {
+            "type": "string",
+            "title": "Project Record Id"
+          },
+          "specimen_record_id": {
+            "type": "string",
+            "title": "Specimen Record Id"
+          },
+          "protocol_record_id": {
+            "type": "string",
+            "title": "Protocol Record Id"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "device_id",
+          "project_record_id",
+          "specimen_record_id",
+          "protocol_record_id"
+        ],
+        "title": "ImportRequestSchema",
+        "description": "Which Airtable hierarchy to import, and onto which rig.\n\n`device_id` is LabOS's alone: which rig will run this is an operator's\ndecision about a physical machine, and Airtable has no opinion on it\n(\u00a74.6 Class 1). `name` overrides the specimen name for the local project,\nfor the case where the mock-up name is not what the lab calls it."
+      },
       "InfiltrationTestSchema": {
         "properties": {
           "type": {
@@ -3829,6 +4291,61 @@
             },
             "type": "array",
             "title": "Cyclic Tests"
+          },
+          "gauge_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gauge Count"
+          },
+          "impact_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Impact Count"
+          },
+          "airtable_project_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Airtable Project Id"
+          },
+          "airtable_mockup_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Airtable Mockup Id"
+          },
+          "airtable_mockup_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Airtable Mockup Name"
           }
         },
         "type": "object",
@@ -3844,6 +4361,24 @@
           "cyclic_tests"
         ],
         "title": "ProjectSchema"
+      },
+      "RunStartSchema": {
+        "properties": {
+          "operator_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operator Name"
+          }
+        },
+        "type": "object",
+        "title": "RunStartSchema",
+        "description": "Who is running this test. Declared, never authenticated (contract \u00a74).\n\nSent by the UI at run start, before hardware moves. The rig's trial callback\nthen inherits it, which is why capturing the operator needs no firmware\nchange: it is not a fact the rig has."
       },
       "ShotDetailSchema": {
         "properties": {
@@ -4050,13 +4585,58 @@
             },
             "type": "array",
             "title": "Deflections"
+          },
+          "operator_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operator Name"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "testing_continued": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Testing Continued"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
           }
         },
         "type": "object",
         "required": [
           "deflections"
         ],
-        "title": "StaticTestResultCreateSchema"
+        "title": "StaticTestResultCreateSchema",
+        "description": "What the rig posts for one completed stage.\n\n**The lifecycle fields are optional and additive**, because production\nfirmware sends `deflections` alone and must keep working. When they are\nsupplied the route completes the attempt in the same call \u2014 which matches\nwhat actually happened, since the rig posts a *finished* stage rather than\nstarting one (plan \u00a74.5).\n\nWithout `operator_name` the attempt stays `In Progress` and its terminal\npayload cannot be built: contract \u00a74.5 requires an operator on a terminal\nwrite and LabOS does not invent one. That refusal is now **visible** in\n`GET /sync/failures` rather than silent, which is the honest behaviour for a\nrig that has not yet been told to send it (TC3)."
       },
       "StaticTestResultSchema": {
         "properties": {
@@ -4066,6 +4646,50 @@
             },
             "type": "array",
             "title": "Deflections"
+          },
+          "operator_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operator Name"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "testing_continued": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Testing Continued"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
           },
           "id": {
             "type": "integer",
@@ -4085,17 +4709,6 @@
               }
             ],
             "title": "Image Path"
-          },
-          "note": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Note"
           }
         },
         "type": "object",

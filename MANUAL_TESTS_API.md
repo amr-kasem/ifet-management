@@ -289,3 +289,74 @@ Postgres on `127.0.0.1:15432`, disposable, `down -v` removes it. Point
 
 Behaviour is pinned by `tests/test_manual_tests.py` — read it as executable
 examples of every rule above.
+
+---
+
+## 11. Beyond the manual tests — the rest of the surface, added 2026-09-08
+
+This document covers the three manual test types. The API grew the same day, and
+these are the routes a UI needs that are **not** described above. Full detail is
+in `openapi.json` / `/docs`; this is the map.
+
+### Picking a job from Airtable, and pre-filling from it
+
+**Every one of these reads a local mirror, never Airtable.** A picker at a rig
+cannot depend on someone else's API being up, so an empty mirror gives an empty
+list rather than a spinner or a 502.
+
+| Route | |
+|---|---|
+| `GET /airtable/projects` | jobs available to import. Each carries `mirrored_at` — a stale mirror is a fact worth showing |
+| `GET /airtable/projects/{rec}/specimens` | with `imported_project_id`, so the UI can say "already imported" instead of letting someone import twice and wonder why nothing changed |
+| `GET /airtable/specimens/{rec}/protocols` | |
+| `GET /airtable/protocols/{rec}/sections` | each section with `executable`, `applicability`, and **`refused`** — the reason LabOS will not run it. **Show `refused`.** It is the one thing the operator can actually fix |
+| `POST /airtable/refresh` | the only route that calls Airtable. Deliberately a button, not a side effect of reading |
+| `POST /airtable/import/plan` | what an import *would* do — executable, unconfirmed and refused sections — without doing it |
+| `POST /airtable/import` | creates the project. **Idempotent on the mock-up**: a repeat returns the same project |
+
+`POST /airtable/import` takes `{device_id, project_record_id,
+specimen_record_id, protocol_record_id, name?}` and returns the same
+`ProjectSchema` as a typed project — because it goes through the *same* create
+route. `gauge_count`, `impact_count` and the `airtable_*` ids are now on that
+response, so a pre-filled form can read what was filled in.
+
+**Which rig is LabOS's alone.** `device_id` is an operator's decision about a
+physical machine; Airtable has no opinion on it.
+
+### Sync status — the operator's "did it reach Airtable?"
+
+| Route | |
+|---|---|
+| `GET /sync/status` | `status` is one of **`Synced` · `Pending` · `Sync Failed` · `Retry Required`** — the Airtable team's own four words. Also `attachment_backlog`, `attachment_parked`, `artifacts_needing_reconciliation`, `failed_publications`, `worker_alive` |
+| `GET /sync/queue` | one row per pending write, with `channel` (`record` or `attachment`) |
+| `POST /sync/queue/{id}/retry` | un-park one entry. Re-enables eligibility; sends nothing |
+| `GET /sync/failures` | payloads LabOS **refused to queue**. Invisible in `/sync/queue` by construction — they never got an entry |
+| `POST /sync/failures/{id}/repair` | rebuild and re-queue one. `409` while it is still refused, with the current reason |
+
+Two things worth building around:
+
+- **Attachments have their own channel.** A photograph stuck in delivery cannot
+  hold up a verdict, and a parked attachment does not drag the headline status to
+  `Retry Required`. Show `attachment_backlog` separately from `failed_publications`.
+- **`/sync/failures` needs a surface.** These are results that were saved
+  correctly and could not be described to Airtable. Before this route existed the
+  headline read `Synced` while such an attempt had never been published.
+
+### Two behaviours that will change your screens
+
+- **Start is idempotent.** `POST …/trials` on a test that already has an open
+  attempt returns **that attempt**, not a new one — a double-click cannot become
+  two certification records. A retest requires the previous attempt to be
+  terminal, so a "Retest" button must finish or abort first.
+- **One active run per rig.** Starting a test on a rig that is already running a
+  different one returns **409**. Surface the message; it names the blocking
+  attempt.
+
+### Run start, for Static Load and Cycles
+
+`PUT /projects/{pid}/static_tests/{index}/start` and
+`PUT /projects/{pid}/cyclic_tests/{index}/start` accept
+`{"operator_name": "..."}`. **Send it.** The rig's callback carries only
+deflections, so the operator declared here is what lets the attempt complete and
+publish — without it the attempt stays `In Progress` and the refusal shows up in
+`/sync/failures`.
