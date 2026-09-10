@@ -227,14 +227,16 @@ FIELDS = [
     # `terminal+verdict` like `Test Result`, so at terminal the applicable
     # field carries `Pending` and the first review replaces it. That is why
     # `Pending` is in the option set.
-    Field("Forced Entry Result", CONDITIONAL, ABSENT, "single select",
+    Field("Forced Entry Result", CONDITIONAL, PRESENT, "single select",
           options=["Pending", "Pass", "Fail", "Inconclusive"],
-          option_wire={"Pass": "Passed", "Fail": "Failed"}, pending_schema=True,
-          note="test_results.test_result, gated to Test Type = Forced Entry"),
-    Field("ANSI Result", CONDITIONAL, ABSENT, "single select",
+          option_wire={"Pass": "Passed", "Fail": "Failed"},
+          note="APPLIED 2026-09-11 fldAHuPzZHZEj0Cjt — "
+               "test_results.test_result, gated to Test Type = Forced Entry"),
+    Field("ANSI Result", CONDITIONAL, PRESENT, "single select",
           options=["Pending", "Pass", "Fail", "Inconclusive"],
-          option_wire={"Pass": "Passed", "Fail": "Failed"}, pending_schema=True,
-          note="test_results.test_result, gated to Test Type = ANSI Z97.1"),
+          option_wire={"Pass": "Passed", "Fail": "Failed"},
+          note="APPLIED 2026-09-11 fldmCKJV95N9uL7xt — "
+               "test_results.test_result, gated to Test Type = ANSI Z97.1"),
     Field("Result Detail (JSON)", CONDITIONAL, RENAMED, "long text",
           wire_name="Complete LabOS JSON Response",
           note="granted in v2 — the extensibility valve, §6"),

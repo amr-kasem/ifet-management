@@ -239,7 +239,7 @@ def main(argv=None):
     print(f"   {checked} fields present and correctly typed")
 
     # -- 4. APPLIED rows are the 17 preflight asserts ---------------------
-    print("\n4. APPLIED rows are the 17 preflight checks")
+    print("\n4. APPLIED rows are exactly the preflight checks")
     want = {name: typ for fields in added.values() for name, typ in fields}
     have = {r["airtable_field"]: r["airtable_type"] for r in rows
             if r["delivery_state"] == "APPLIED"}

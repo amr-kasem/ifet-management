@@ -311,8 +311,12 @@ class JsonOnlyFieldsSurvive(unittest.TestCase):
     def test_the_pending_schema_set_is_what_is_currently_owed(self):
         """`pending_schema` marks a field decided but not yet created. TA7b's
         two were created on 2026-09-11 and left the set; TA6's two entered it
-        the same day and leave when they are applied."""
-        self.assertEqual(("Forced Entry Result", "ANSI Result"),
+        the same day and left it the same day, applied as
+        `Forced Entry Result` fldAHuPzZHZEj0Cjt and `ANSI Result`
+        fldmCKJV95N9uL7xt. Nothing is owed, and this asserts that rather than
+        assuming it — a field left marked pending after it exists is one the
+        envelope keeps routing through the JSON valve."""
+        self.assertEqual((),
                          tuple(f.labos_name for f in C.FIELDS if f.pending_schema))
 
     def test_cycles_completed_reaches_the_json_not_a_column(self):

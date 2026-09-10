@@ -8,7 +8,7 @@ bases we do not control between one day and the next.
 
 It checks four claims, and each one has a way of being quietly wrong:
 
-1. **The 18 fields exist in Testing, with the right types.** A field created by
+1. **Every added field exists in Testing, with the right types.** A field created by
    hand instead of by the tool could be `singleLineText` where the document says
    `number`, and nothing else would notice.
 2. **Production still has none of them, and is still 142 fields.** If someone
@@ -64,6 +64,15 @@ ADDED = {
         # replaced the three withdrawn Protocol Sections requirements.
         ("Impact Classification", "singleSelect"),
         ("Target Impact Velocity", "number"),
+        # Applied 2026-09-11, TA6. `Forced Entry Result` fldAHuPzZHZEj0Cjt,
+        # `ANSI Result` fldmCKJV95N9uL7xt — the same verdict as `Test Result`
+        # projected onto its own standard, so a report about Forced Entry or
+        # ANSI Z97.1 does not have to filter `Test Result` by `Test Type`
+        # first. Their choices are asserted below: they are created in the
+        # *wire* spelling, and a select holding Pass/Fail would reject every
+        # verdict LabOS sends.
+        ("Forced Entry Result", "singleSelect"),
+        ("ANSI Result", "singleSelect"),
     ],
 }
 
@@ -82,18 +91,18 @@ DEPRECATED_TESTING_ONLY = {
     ],
 }
 
-# **Decided and not yet created.** TA7b adds these two to the Testing Base.
-# Until that write happens they must be absent from *both* bases, and this
-# script says so out loud rather than silently not checking them. The day they
-# are created they move into ADDED — that move is the schema write's
+# **Decided and not yet created.** A field lands here the moment it is agreed
+# and leaves it the day the schema write lands. While it is here it must be
+# absent from *both* bases, and this script says so out loud rather than
+# silently not checking it; moving it into ADDED is the schema write's
 # acceptance criterion, not a tidy-up afterwards.
-PENDING_SCHEMA = {
-    # TA6. Decided by the product owner 2026-09-10, not yet created.
-    RAW: [
-        ("Forced Entry Result", "singleSelect"),
-        ("ANSI Result", "singleSelect"),
-    ],
-}
+#
+# **Empty since 2026-09-11.** TA7b's pair went in on 2026-09-11 and TA6's
+# followed the same day; both are now in ADDED with their real field ids. The
+# set is kept rather than deleted because it is the mechanism, not the list —
+# check 2 guards whatever is in it against production, so the next decided
+# field is one line away from being checked instead of assumed.
+PENDING_SCHEMA = {}
 
 # Type alone is not the contract for these. A singleSelect with the wrong
 # choices accepts nothing LabOS sends; a number with precision 0 silently
@@ -167,8 +176,9 @@ def main(argv=None):
 
     print("PRE-SEND CHECK — read-only, both bases\n")
 
-    # -- 1. the 17 exist in Testing, correctly typed ----------------------
-    print("1. The 17 added fields, in Testing")
+    # -- 1. every added field exists in Testing, correctly typed ----------
+    _n_added = sum(len(f) for f in ADDED.values())
+    print(f"1. The {_n_added} added fields, in Testing")
     n = 0
     for table, fields in ADDED.items():
         live = test_s.get(table, {})
@@ -215,15 +225,17 @@ def main(argv=None):
     print(f"   {sum(len(f) for f in DEPRECATED_TESTING_ONLY.values())} withdrawn, "
           f"{len(SECTION_FIELDS)} fields on the read allowlist")
 
-    # -- 1b. the two TA7b fields, and exact shape once they exist ----------
-    print("\n1b. The two TA7b outbound fields")
+    # -- 1b. fields decided but not yet created, and their shape once they are
+    print("\n1b. Fields decided but not yet created")
+    if not PENDING_SCHEMA:
+        print("   none owed - every decided field has been applied to Testing")
     for table, fields in PENDING_SCHEMA.items():
         live = test_s.get(table, {})
         for name, want in fields:
             got = live.get(name)
             if got is None:
-                print(f"   PENDING  {name} - not yet created (expected before "
-                      "the TA7b schema write)")
+                print(f"   PENDING  {name} - not yet created (expected until "
+                      "the schema write that adds it)")
                 continue
             if got != want:
                 fails.append(f"{name!r} is {got!r} in Testing, expected {want!r}")

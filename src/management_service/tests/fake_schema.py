@@ -70,6 +70,11 @@ RAW_DATA_FIELDS = [
     # Protocol Sections impact requirements.
     _sel('Impact Classification', ['SMI', 'LMI Level D', 'LMI Level E']),
     _f('Target Impact Velocity', 'number'),
+    # Applied to the Testing Base 2026-09-11 - fldAHuPzZHZEj0Cjt and
+    # fldmCKJV95N9uL7xt. The wire spelling, not the LabOS one: the base holds
+    # Passed/Failed and `contract.Field.option_wire` is what translates.
+    _sel('Forced Entry Result', ['Pending', 'Passed', 'Failed', 'Inconclusive']),
+    _sel('ANSI Result', ['Pending', 'Passed', 'Failed', 'Inconclusive']),
     _f('Complete LabOS JSON Response', 'multilineText'),
     _f('Notes', 'multilineText'),
     _f('Photos', 'url'),
