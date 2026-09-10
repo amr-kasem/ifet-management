@@ -65,6 +65,11 @@ RAW_DATA_FIELDS = [
     # too, or the probe's "contract expects a field the base does not have"
     # check fires on a field the real base does have.
     _f('Impact Number', 'number'),
+    # Applied to the Testing Base 2026-09-11 - fldMY7DiiuP9kbQbL and
+    # fldhywP9YpsmoWWT1. The outbound pair that replaced the three withdrawn
+    # Protocol Sections impact requirements.
+    _sel('Impact Classification', ['SMI', 'LMI Level D', 'LMI Level E']),
+    _f('Target Impact Velocity', 'number'),
     _f('Complete LabOS JSON Response', 'multilineText'),
     _f('Notes', 'multilineText'),
     _f('Photos', 'url'),

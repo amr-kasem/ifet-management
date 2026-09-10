@@ -300,10 +300,14 @@ class JsonOnlyFieldsSurvive(unittest.TestCase):
                        if not f.expected_live and not f.pending_schema)
         self.assertEqual(absent, self.JSON_ONLY)
 
-    def test_the_pending_schema_fields_are_exactly_the_two_ta7b_adds(self):
-        pending = tuple(f.labos_name for f in C.FIELDS if f.pending_schema)
-        self.assertEqual(("Impact Classification", "Target Impact Velocity"),
-                         pending)
+    def test_nothing_is_pending_schema_now(self):
+        """`pending_schema` marks a field decided but not yet created. Both
+        TA7b fields were created on 2026-09-11, so the set is empty again -
+        which is the assertion, not the absence of one. The flag stays for the
+        next application; an empty tuple says no field is currently owed,
+        which is a different claim from the mechanism having been deleted."""
+        self.assertEqual((), tuple(f.labos_name for f in C.FIELDS
+                                   if f.pending_schema))
 
     def test_cycles_completed_reaches_the_json_not_a_column(self):
         w = build_terminal(terminal(C.CYCLES), live_options=live_options())

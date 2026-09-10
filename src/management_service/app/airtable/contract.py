@@ -199,16 +199,17 @@ FIELDS = [
     #
     # `ABSENT` because production does not have it and will not until a
     # coordinated change; the Testing Base gets it in TA7b.
-    Field("Impact Classification", CONDITIONAL, ABSENT, "single select",
-          options=["SMI", "LMI Level D", "LMI Level E"], pending_schema=True,
-          note="derived from impact_family + impact_level; Impact only"),
+    Field("Impact Classification", CONDITIONAL, PRESENT, "single select",
+          options=["SMI", "LMI Level D", "LMI Level E"],
+          note="APPLIED 2026-09-11 fldMY7DiiuP9kbQbL — derived from "
+               "impact_family + impact_level; Impact only"),
     # The **target**, operator-entered in LabOS, ft/s. Never `shots.velocity`,
     # which is the achieved value per impact and stays in the JSON only. No
     # authoritative table derives this from the classification, so it is a
     # value somebody typed and not one we computed.
-    Field("Target Impact Velocity", CONDITIONAL, ABSENT, "number",
-          pending_schema=True,
-          note="missile_impact_tests.target_velocity, ft/s; Impact only"),
+    Field("Target Impact Velocity", CONDITIONAL, PRESENT, "number",
+          note="APPLIED 2026-09-11 fldhywP9YpsmoWWT1 — "
+               "missile_impact_tests.target_velocity, ft/s; Impact only"),
     Field("Result Detail (JSON)", CONDITIONAL, RENAMED, "long text",
           wire_name="Complete LabOS JSON Response",
           note="granted in v2 — the extensibility valve, §6"),

@@ -59,6 +59,11 @@ ADDED = {
         # roll-ups count tests and impacts separately once one attempt is one
         # impact — without it a five-impact test reads as five tests.
         ("Impact Number", "number"),
+        # Applied 2026-09-11. `Impact Classification` fldMY7DiiuP9kbQbL,
+        # `Target Impact Velocity` fldhywP9YpsmoWWT1 — the outbound pair that
+        # replaced the three withdrawn Protocol Sections requirements.
+        ("Impact Classification", "singleSelect"),
+        ("Target Impact Velocity", "number"),
     ],
 }
 
@@ -82,12 +87,7 @@ DEPRECATED_TESTING_ONLY = {
 # script says so out loud rather than silently not checking them. The day they
 # are created they move into ADDED — that move is the schema write's
 # acceptance criterion, not a tidy-up afterwards.
-PENDING_SCHEMA = {
-    RAW: [
-        ("Impact Classification", "singleSelect"),
-        ("Target Impact Velocity", "number"),
-    ],
-}
+PENDING_SCHEMA = {}
 
 # Type alone is not the contract for these. A singleSelect with the wrong
 # choices accepts nothing LabOS sends; a number with precision 0 silently
@@ -111,6 +111,21 @@ SPEC = (pathlib.Path(__file__).resolve().parents[5] / "ifet-firmware" / "docs"
 def schema(base, token):
     tables = api("GET", f"https://api.airtable.com/v0/meta/bases/{base}/tables", token)["tables"]
     return {t["id"]: {f["name"]: f["type"] for f in t["fields"]} for t in tables}, tables
+
+
+def _assert_shape(name, opts, fails):
+    """Exact choices and precision, asserted wherever the field appears."""
+    if name in EXPECTED_CHOICES:
+        got = [c["name"] for c in opts.get("choices", [])]
+        if got != EXPECTED_CHOICES[name]:
+            fails.append(f"{name!r} choices are {got}, "
+                         f"expected {EXPECTED_CHOICES[name]}")
+            print(f"   CHOICES  {name}: {got}")
+    if name in EXPECTED_PRECISION:
+        if opts.get("precision") != EXPECTED_PRECISION[name]:
+            fails.append(f"{name!r} precision is {opts.get('precision')!r}, "
+                         f"expected {EXPECTED_PRECISION[name]}")
+            print(f"   PRECIS   {name}: {opts.get('precision')}")
 
 
 def _options(tables, table_id, field_name):
@@ -155,6 +170,12 @@ def main(argv=None):
             elif got != want:
                 fails.append(f"{name!r} is {got!r} in Testing, document says {want!r}")
                 print(f"   WRONG    {name}: {got} (document says {want})")
+            else:
+                # **Type is not the whole contract for these.** A singleSelect
+                # with the wrong choices accepts nothing LabOS sends, and a
+                # number with precision 0 silently truncates 50.25 ft/s. Both
+                # would pass a type check and fail in front of an operator.
+                _assert_shape(name, _options(test_t, table, name) or {}, fails)
     print(f"   {n - len([f for f in fails])} of {n} present and correctly typed")
 
     # -- 1a. the deprecated three are still there, and still unread --------
