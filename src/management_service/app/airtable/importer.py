@@ -43,6 +43,11 @@ LOCAL_TYPE_BY_CODE = {
     "ANSI_IMPACT": "manual:ANSI Z97.1",
 }
 
+# Static programmes LabOS can actually run. Contract §3.1 already says the
+# "initial static programme supports `Full`" — until 2026-09-10 nothing
+# enforced it, and an unsupported value was discarded silently.
+SUPPORTED_STATIC_PROGRAMMES = frozenset({"Full"})
+
 
 class ImportError_(Exception):
     """The hierarchy cannot be imported as given."""
@@ -70,6 +75,7 @@ class ImportPlan:
         self.design_pressures = None
         self.gauge_count = None
         self.impact_count = None
+        self.static_unavailable = None   # why Static Load cannot run, if it cannot
 
     def as_dict(self):
         return {
@@ -83,6 +89,7 @@ class ImportPlan:
             "design_pressures": self.design_pressures,
             "gauge_count": self.gauge_count,
             "impact_count": self.impact_count,
+            "static_unavailable": self.static_unavailable,
             "executable": [{"code": c, "section": s.record_id,
                             "section_name": s.section_name,
                             "local_type": t}
@@ -137,6 +144,7 @@ def plan(session, project_record_id, specimen_record_id, protocol_record_id):
             "mirror, so there is nothing to import.")
 
     out = ImportPlan(project, specimen, protocol, sections)
+    programmes = []
     for section in sections:
         applicability = req.applicability_of(section)
         try:
@@ -152,7 +160,12 @@ def plan(session, project_record_id, specimen_record_id, protocol_record_id):
             out.gauge_count = int(section.required_value)
             continue
         if code == "STATIC_PROGRAMME":
-            continue    # a parameter, not a test
+            # A parameter, not a test — but not one that can be ignored.
+            # Held for the post-loop gate below: a protocol's STATIC_PRESSURE
+            # sections may already have been read by the time this one is
+            # seen, so suppression cannot be decided inline.
+            programmes.append(section)
+            continue
         if code in ("STATIC_PRESSURE", "CYCLIC_PRESSURE"):
             pair = (section.required_value_inward, section.required_value_outward)
             if out.design_pressures and out.design_pressures != list(pair):
@@ -192,7 +205,55 @@ def plan(session, project_record_id, specimen_record_id, protocol_record_id):
             out.unconfirmed.append(section)
             continue
         out.executable.append((code, section, LOCAL_TYPE_BY_CODE[code]))
+
+    _gate_static_programme(out, programmes)
     return out
+
+
+def _gate_static_programme(out, programmes):
+    """An unsupported static programme makes Static Load non-executable.
+
+    **Report-only refusal would not have worked, and that is the point.**
+    `refused` is serialised into the import report by `as_dict` and consumed by
+    nothing. Appending to it and stopping would have reported the unsupported
+    programme and then run the **Full** six-stage sequence anyway — LabOS
+    derives the programme from the design-pressure pair and never consulted
+    this value at all. The operator would have seen an ordinary static test.
+
+    So the suppression is narrow and explicit: **Static Load only.** Cycles,
+    Impact, Forced Entry and ANSI Z97.1 in the same protocol are untouched, and
+    `design_pressures` is deliberately left set — Cycles derives its eight
+    stages from the same pair and has no programme of its own.
+
+    A blank `Required Option` never reaches here: `requirements.validate`
+    already refuses an Enum requirement with no option, so that section is
+    refused in the loop above.
+    """
+    for section in programmes:
+        option = (section.required_option or "").strip()
+        if option in SUPPORTED_STATIC_PROGRAMMES:
+            continue
+
+        supported = ", ".join(sorted(SUPPORTED_STATIC_PROGRAMMES))
+        out.refused.append((section, req.RequirementError(
+            f"static programme {option!r} is not supported. LabOS runs "
+            f"{supported} only, and will not substitute the Full programme for "
+            "the one the proposal asked for. Static Load is not executable for "
+            "this protocol; Cycles, Impact, Forced Entry and ANSI Z97.1 are "
+            "unaffected.")))
+
+        suppressed = [e for e in out.executable if e[0] == "STATIC_PRESSURE"]
+        out.executable = [e for e in out.executable if e[0] != "STATIC_PRESSURE"]
+        for _code, pressure_section, _type in suppressed:
+            out.refused.append((pressure_section, req.RequirementError(
+                f"Static Load is unavailable: this protocol asks for the "
+                f"{option!r} static programme, which LabOS does not support. "
+                "The design pressures themselves are readable and are not in "
+                "doubt — what LabOS cannot do is run the programme requested.")))
+
+        out.static_unavailable = (
+            f"static programme {option!r} is not supported (LabOS runs "
+            f"{supported} only)")
 
 
 def existing_project(session, specimen_record_id):

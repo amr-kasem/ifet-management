@@ -72,6 +72,8 @@ def section(record_id, code, **over):
                     impact_velocity=50.0)
     elif code == "GAUGE_COUNT":
         base.update(required_value=3.0)
+    elif kind == "Enum":
+        base.update(required_option="Full")
     elif kind == "Not Applicable":
         base.update(required_option="ASTM F588 Grade 40")
     base.update(over)
@@ -490,6 +492,145 @@ class TheRequirementIsFrozenAtStart(_Base):
             self.assertIsNone(row.requirement_snapshot)
         finally:
             s.close()
+
+
+class AnUnsupportedStaticProgrammeSuppressesStaticLoad(_Base):
+    """`STATIC_PROGRAMME` was read, validated and then discarded.
+
+    Contract §3.1 has always said the "initial static programme supports
+    `Full`", and until 2026-09-10 nothing enforced it: `importer.plan` hit
+    `continue` on the code and LabOS ran its own six-stage sequence whatever
+    the proposal asked for.
+
+    Reporting the mismatch is **not** enough, which is what these tests pin.
+    `ImportPlan.refused` is serialised by `as_dict` and consumed by nothing, so
+    a refusal that stopped there would have printed a line in an import report
+    and then run the Full programme anyway. The requirement is that Static Load
+    stops being executable — and that nothing else does.
+    """
+
+    def _plan(self):
+        return self.client.post("/airtable/import/plan", json={
+            "device_id": 1, "project_record_id": PROJ,
+            "specimen_record_id": SPEC, "protocol_record_id": PROT}).json()
+
+    def test_full_is_supported_and_changes_nothing(self):
+        self.full_protocol()
+        self.mirror_sections(section("recSEC_PROG", "STATIC_PROGRAMME",
+                                     required_option="Full"))
+        plan = self._plan()
+        codes = [e["code"] for e in plan["executable"]]
+        self.assertIn("STATIC_PRESSURE", codes)
+        self.assertIsNone(plan["static_unavailable"])
+        self.assertEqual([], [r for r in plan["refused"]], plan["refused"])
+
+    def test_an_unsupported_programme_makes_static_load_non_executable(self):
+        self.full_protocol()
+        self.mirror_sections(section("recSEC_PROG", "STATIC_PROGRAMME",
+                                     required_option="Partial"))
+        plan = self._plan()
+        codes = [e["code"] for e in plan["executable"]]
+        self.assertNotIn("STATIC_PRESSURE", codes)
+        self.assertIsNotNone(plan["static_unavailable"])
+        self.assertIn("Partial", plan["static_unavailable"])
+
+    def test_it_suppresses_static_load_and_nothing_else(self):
+        self.full_protocol()
+        self.mirror_sections(section("recSEC_PROG", "STATIC_PROGRAMME",
+                                     required_option="Partial"))
+        codes = {e["code"] for e in self._plan()["executable"]}
+        self.assertEqual({"CYCLIC_PRESSURE", "IMPACT_LMI", "FORCED_ENTRY",
+                          "ANSI_IMPACT"}, codes)
+
+    def test_the_design_pressures_survive_because_cycles_needs_them(self):
+        """Cycles derives its eight stages from the same pair and has no
+        programme of its own, so suppressing the pair would break a test the
+        proposal did not ask a question about."""
+        self.full_protocol()
+        self.mirror_sections(section("recSEC_PROG", "STATIC_PROGRAMME",
+                                     required_option="Partial"))
+        self.assertEqual([60.0, 45.0], self._plan()["design_pressures"])
+
+    def test_the_reason_names_the_programme_and_says_what_is_unavailable(self):
+        self.full_protocol()
+        self.mirror_sections(section("recSEC_PROG", "STATIC_PROGRAMME",
+                                     required_option="Reduced"))
+        reasons = " ".join(r["reason"] for r in self._plan()["refused"])
+        self.assertIn("Reduced", reasons)
+        self.assertIn("not supported", reasons)
+        self.assertIn("Static Load is unavailable", reasons)
+
+    def test_the_static_section_itself_is_refused_not_silently_dropped(self):
+        """An operator must be able to see *which* section stopped working."""
+        self.full_protocol()
+        self.mirror_sections(section("recSEC_PROG", "STATIC_PROGRAMME",
+                                     required_option="Partial"))
+        refused = {r["section"] for r in self._plan()["refused"]}
+        self.assertIn("recSEC_STATIC", refused)
+        self.assertIn("recSEC_PROG", refused)
+
+    def test_it_works_when_the_programme_section_is_read_first(self):
+        """Sections are ordered by record id, so the programme can arrive
+        before or after the pressure section it suppresses. The gate runs after
+        the loop for exactly this reason.
+
+        Note this is the case the rest of this class happens to exercise
+        anyway: `recSEC_PROG` sorts before `recSEC_STATIC`. The one that
+        matters is the sibling test below.
+        """
+        self.mirror_sections(
+            section("recSEC_AAA_PROG", "STATIC_PROGRAMME",
+                    required_option="Partial"),
+            section("recSEC_ZZZ_STATIC", "STATIC_PRESSURE"))
+        codes = [e["code"] for e in self._plan()["executable"]]
+        self.assertNotIn("STATIC_PRESSURE", codes)
+
+    def test_it_works_when_the_programme_section_is_read_last(self):
+        """**The case an inline check would have failed.**
+
+        Here the pressure section is already in `out.executable` by the time
+        the programme is seen, so suppression cannot be a branch inside the
+        loop — it has to run after it. Reversing the ids is the whole test.
+        """
+        self.mirror_sections(
+            section("recSEC_AAA_STATIC", "STATIC_PRESSURE"),
+            section("recSEC_ZZZ_PROG", "STATIC_PROGRAMME",
+                    required_option="Partial"))
+        plan = self._plan()
+        self.assertNotIn("STATIC_PRESSURE",
+                         [e["code"] for e in plan["executable"]])
+        self.assertIn("recSEC_AAA_STATIC",
+                      {r["section"] for r in plan["refused"]})
+
+    def test_both_orderings_produce_the_same_plan(self):
+        """Order-independence stated as one assertion rather than inferred
+        from two tests that happen to agree."""
+        def plan_for(prog_id, static_id):
+            s = self.Session()
+            try:
+                from app.airtable.mirror import AtMirrorSection
+                s.query(AtMirrorSection).delete()
+                s.commit()
+            finally:
+                s.close()
+            self.mirror_sections(
+                section(static_id, "STATIC_PRESSURE"),
+                section(prog_id, "STATIC_PROGRAMME", required_option="Partial"))
+            p = self._plan()
+            return ([e["code"] for e in p["executable"]],
+                    p["static_unavailable"])
+
+        self.assertEqual(plan_for("recSEC_A_PROG", "recSEC_Z_STATIC"),
+                         plan_for("recSEC_Z_PROG", "recSEC_A_STATIC"))
+
+    def test_a_blank_programme_is_already_refused_by_kind_validation(self):
+        """Not this gate's job: an Enum requirement with no option never
+        reaches it."""
+        self.full_protocol()
+        self.mirror_sections(section("recSEC_PROG", "STATIC_PROGRAMME",
+                                     required_option=None))
+        reasons = " ".join(r["reason"] for r in self._plan()["refused"])
+        self.assertIn("Required Option is blank", reasons)
 
 
 if __name__ == "__main__":
