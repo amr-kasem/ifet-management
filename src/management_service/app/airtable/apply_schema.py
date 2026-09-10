@@ -153,35 +153,21 @@ FIELDS = [
     # All three map 1:1 onto columns that already exist in the LabOS database —
     # `missile_impact_tests.missile`, `.missile_weight`, `shots.velocity` — so
     # nothing new has to be modelled to consume them.
-    (PROTOCOL_SECTIONS, {
-        "name": "Missile Type",
-        "type": "singleLineText",
-        "description": (
-            "The missile the protocol specifies, e.g. 'Large Missile D'. Free text "
-            "because the standard's set is open and LabOS does not invent an option "
-            "set the requirement side does not have. Pre-fills "
-            "missile_impact_tests.missile so an operator does not retype what the "
-            "protocol already fixes."),
-    }),
-    (PROTOCOL_SECTIONS, {
-        "name": "Missile Weight",
-        "type": "number",
-        "options": {"precision": 2},
-        "description": (
-            "Missile mass in pounds, as the protocol specifies it. Pre-fills "
-            "missile_impact_tests.missile_weight. A requirement, never a "
-            "measurement — LabOS never writes an achieved value back here."),
-    }),
-    (PROTOCOL_SECTIONS, {
-        "name": "Impact Velocity",
-        "type": "number",
-        "options": {"precision": 2},
-        "description": (
-            "Target impact velocity in ft/s that the protocol requires. Pre-fills "
-            "the per-shot target; the achieved velocity stays in LabOS on "
-            "shots.velocity and is not published back. A target is never an "
-            "achieved value (decision A2)."),
-    }),
+    # --- WITHDRAWN 2026-09-10: Missile Type, Missile Weight, Impact Velocity
+    #
+    # Applied to the Testing Base on 2026-09-08 as inbound impact
+    # requirements; withdrawn from the read contract two days later when the
+    # product owner made the impact classification LabOS-owned. Their
+    # definitions are removed from this list so the script **never proposes
+    # them to any base again** — most importantly never to production, which
+    # has never had them and stays at 142.
+    #
+    # **They are deliberately NOT deleted from the Testing Base.** This script
+    # only ever creates: it prints SKIP for a field that already exists and has
+    # no PATCH or DELETE path at all. Removing them from the shared base is a
+    # later coordinated cleanup with the Airtable team, not a side effect of a
+    # code change. `preflight.DEPRECATED_TESTING_ONLY` is what keeps asserting
+    # that they remain present in Testing and absent from production.
 
     # --- Impact Number: the axis that keeps their roll-ups honest -----------
     #
@@ -208,6 +194,49 @@ FIELDS = [
             "other type. Count tests by grouping on LabOS Test ID; count impacts with "
             "this. A roll-up that counts attempt rows instead will read a five-impact "
             "test as five tests."),
+    }),
+
+    # --- the impact classification, 2026-09-10 ------------------------------
+    #
+    # The direction reversal. Airtable used to be asked for the missile, its
+    # weight and a target velocity; the product owner replaced all three with
+    # one classification chosen in LabOS and published back. Airtable's
+    # requirement code already says IMPACT_SMI or IMPACT_LMI — the only fact it
+    # never carried is Level D versus E, and that is the operator's.
+    #
+    # A single select rather than free text, so their views group and filter on
+    # it natively. The cost is accepted deliberately: adding a future level
+    # needs a coordinated schema change on their side, not just ours.
+    #
+    # **Derived, never stored and never an input.** LabOS holds
+    # `impact_family` + `impact_level`; this string is a property over the
+    # pair, so it cannot disagree with the requirement code the family was
+    # frozen from.
+    (RAW_RESULTS, {
+        "name": "Impact Classification",
+        "type": "singleSelect",
+        "options": {"choices": [{"name": "SMI"},
+                                {"name": "LMI Level D"},
+                                {"name": "LMI Level E"}]},
+        "description": (
+            "Which missile classification this impact ran under — SMI, LMI Level D "
+            "or LMI Level E. Chosen in LabOS and published with the result; for a "
+            "job imported from Airtable the SMI/LMI half comes from the section's "
+            "IMPACT_SMI / IMPACT_LMI requirement code and only the level is the "
+            "operator's. Populated for Test Type = Impact, blank on every other "
+            "type. Replaces the Missile Type, Missile Weight and Impact Velocity "
+            "request of 2026-09-08, which LabOS no longer reads."),
+    }),
+    (RAW_RESULTS, {
+        "name": "Target Impact Velocity",
+        "type": "number",
+        "options": {"precision": 2},
+        "description": (
+            "The target impact velocity the test was run against, in ft/s, entered "
+            "in LabOS by the operator. A target, never a measurement: the achieved "
+            "velocity of each individual impact stays in LabOS and travels only "
+            "inside Complete LabOS JSON Response. Populated for Test Type = Impact, "
+            "blank on every other type."),
     }),
 
     # --- LabOS Raw Data Table: corrections, review identity, execution times, evidence

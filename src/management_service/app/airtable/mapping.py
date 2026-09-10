@@ -363,6 +363,21 @@ def envelope_values(attempt, *, strict=True):
         "Measured Value": attempt.measured_value,
         "Unit": attempt.unit,
         "Impact Result": attempt.impact_result or _impact_result(attempt),
+        # **Impact only, and derived rather than stored.**
+        # `impact_classification` is a property over the test's stored
+        # `impact_family` + `impact_level`; there is no column holding the
+        # string, so the wire value cannot drift from the pair it comes from.
+        #
+        # `None` for the other four types, which §5 turns into an omitted key
+        # rather than a blank cell — the same treatment `Impact Number` gets.
+        "Impact Classification": (
+            getattr(test, "impact_classification", None)
+            if attempt.test_type == C.IMPACT else None),
+        # The target the operator entered, not an achieved measurement. The
+        # per-impact achieved velocity stays in the JSON on `shots.velocity`
+        # and is never published here: a target is not an achievement (A2).
+        "Target Impact Velocity": (getattr(test, "target_velocity", None)
+                                   if attempt.test_type == C.IMPACT else None),
         "Required Value": attempt.required_value,
         "Required Unit": attempt.required_unit,
         # The attempt's own snapshot only — never read live from the test.

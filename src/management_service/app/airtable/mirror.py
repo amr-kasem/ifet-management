@@ -71,9 +71,19 @@ SECTION_FIELDS = {
     "Required Value Outward": "required_value_outward",
     "Required Unit": "required_unit",
     "Required Option": "required_option",
-    "Missile Type": "missile",
-    "Missile Weight": "missile_weight",
-    "Impact Velocity": "impact_velocity",
+    # **Withdrawn 2026-09-10 — `Missile Type`, `Missile Weight` and
+    # `Impact Velocity` are no longer read.** They stay physically present in
+    # the Testing Base and are never created in production; what changed is
+    # that Airtable no longer owns the impact requirement beyond the count.
+    # The impact classification is selected in LabOS and published outbound
+    # (`missile_impact_tests.impact_family`/`.impact_level`), and the target
+    # velocity is operator-entered on `.target_velocity`.
+    #
+    # This dict is the read boundary itself, not a description of one: a field
+    # absent from here is never copied, whatever the base contains. The
+    # `at_mirror_sections` columns below are deliberately kept — dropping them
+    # is a later coordinated cleanup alongside the Airtable fields, and TA7b
+    # stays additive-free on the database.
 }
 
 # Fields that exist and must never be read. Named so the refusal is explicit

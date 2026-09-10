@@ -220,50 +220,54 @@ project once sees all five test types.
 | `project_id` | from the picker | from the picker |
 | `type` | from `Requirement Code` (`FORCED_ENTRY` → Forced Entry, `ANSI_IMPACT` → ANSI Z97.1) | operator chooses |
 | `required_option` | `Required Option` | operator types |
-| `missile`, `missile_weight` | ~~`Missile Type`, `Missile Weight`~~ **withdrawn — see the notice below** | operator types, or leaves blank |
+| `missile`, `missile_weight` | ~~`Missile Type`, `Missile Weight`~~ **withdrawn 2026-09-10** — never pre-filled again | operator types, or leaves blank |
+| `impact_family` | **not yours to send** — resolved from the bound section's requirement code | operator chooses `SMI` or `LMI` |
+| `impact_level` | operator chooses `D` or `E`, LMI only | same |
+| `target_velocity` | operator enters, ft/s | same |
 | `operator_name` | remembered per device | remembered per device |
 | `airtable_*` | from the mirror | omit |
 
 **Both columns must work.** A LabOS-only job has no Airtable identity and is
 fully testable — that is the normal mode, not a degraded one.
 
-### ⚠️ Impact is changing — decided 2026-09-10, **not yet implemented**
+### Impact classification — built 2026-09-10, **not yet deployed**
 
-**Nothing in this section has shipped. Every route and every validation
-described below behaves today exactly as documented above.** This notice is
-here so the Impact screen is not built twice; it is deliberately not written as
-if it were live, because it is not.
+The routes below behave this way in the codebase now. **Nothing is deployed**, and the two Airtable
+fields do not exist in any base yet — so build against this, but do not expect it from a running
+instance until the deploy lands.
 
-The product owner has withdrawn the missile requirement from Airtable. Impact
-requirements no longer arrive as `Missile Type` / `Missile Weight` /
-`Impact Velocity` on Protocol Sections — **those three are deprecated and will
-stop being read.** What replaces them is entered in LabOS:
+Impact requirements no longer arrive from Airtable as `Missile Type` / `Missile Weight` /
+`Impact Velocity`. Two LabOS-owned values replace them:
 
-| Coming field | Type | Values | Where it will be required |
+| Field | Type | Values | Who sets it |
 |---|---|---|---|
-| **Impact Classification** | string, validated | exactly `SMI` · `LMI Level D` · `LMI Level E` | before an Impact attempt can complete |
-| **Target Impact Velocity** | number, ft/s | any positive value — operator-entered | before an Impact attempt can complete |
+| `impact_family` | string | `SMI` · `LMI` | **The importer**, from the section's `IMPACT_SMI`/`IMPACT_LMI` code, on any Airtable-bound test. Operator-set only on a LabOS-only test |
+| `impact_level` | string | `D` · `E` | Operator. **LMI only** |
+| `target_velocity` | number | ft/s | Operator. Not derived from anything |
 
-**What "required before completion" will mean for the form.** Both live on the
-**test**, not the attempt, and neither is needed when the test object is
-created — `POST /projects/{pid}/impact-tests/` stays `{}`-valid. They are needed
-by the time `PUT /test-results/{id}/finish` is called on an Impact attempt
-without an `abort_reason`. An abort will not require them.
+`impact_classification` comes back on both the test and the project payload as a **read-only derived
+value** — `SMI`, `LMI Level D` or `LMI Level E`. Render it; never compute it, and never send it.
 
-So the screen needs somewhere to set both on the impact test — at creation or
-at any point before the first attempt is finished — and it should not let an
-operator reach the finish action without them.
+**`PATCH /projects/{pid}/impact-tests/{id}`** — new. This is how the two values arrive, because
+neither is required at creation:
 
-**What is *not* changing:** the two-step start-then-finish flow, one attempt per
-impact, `shot_number`, `Impact Result`, the photograph requirement, and
-`shots.velocity` — which stays the **achieved** per-impact velocity the operator
-records, and is a different value from Target Impact Velocity. Impact location
-(`shots.area`) also stays exactly as it is.
+- `impact_level`, `target_velocity` — editable until an attempt **completes**, then `409`.
+- `impact_family` — only on a LabOS-only test, and only until **any** attempt exists, aborted
+  included. On a bound test it is `400`. Any other key is `422`.
 
-**When this section becomes live** the table above moves into §7, the finish
-route gains a documented `400`, and this notice is deleted. Until then, build
-against the current behaviour and treat the two fields as the next change
-coming, not as something to code around today.
+**Two new `400`s on `PUT /test-results/{id}/finish`**, for Impact attempts without `abort_reason`:
+the test must have a resolvable classification, and a `target_velocity`. An abort needs neither.
+
+**What the screen needs.** For an `IMPACT_SMI` section there is **no family control** — show "SMI",
+read-only. For `IMPACT_LMI`, a required D/E choice. Never a three-option picker: the SMI/LMI half is
+Airtable's answer and offering it invites a contradiction the API will reject anyway.
+
+**Careful with the two velocities.** `target_velocity` is per *test* and operator-entered.
+`shots.velocity` is the achieved velocity of one impact, unchanged, and stays per shot. Different
+fields, different meanings — they must not share a control.
+
+**Unchanged:** two-step start-then-finish, one attempt per impact, `shot_number`, `Impact Result`,
+the photograph requirement, and impact location on the shot.
 
 ---
 

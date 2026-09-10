@@ -327,9 +327,11 @@ def bind(session, project, import_plan):
             # imported as, for the same reason `requirements.snapshot` freezes
             # the rest of the requirement: a finished test must go on claiming
             # what it actually ran against.
+            # `missile` and `missile_weight` are no longer pre-filled from
+            # the section: those Airtable fields left the read contract on
+            # 2026-09-10. The columns remain for the 39 historical tests that
+            # carry values, and an operator may still type one.
             test = MissileImpactTest(project_id=project.id,
-                                     missile=section.missile,
-                                     missile_weight=section.missile_weight,
                                      impact_family=IMPACT_FAMILY_BY_CODE[code],
                                      **common)
             session.add(test)

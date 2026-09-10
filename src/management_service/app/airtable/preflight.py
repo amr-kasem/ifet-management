@@ -50,8 +50,6 @@ ADDED = {
         ("Applicability", "singleSelect"), ("Required Value", "number"),
         ("Required Value Inward", "number"), ("Required Value Outward", "number"),
         ("Required Unit", "singleSelect"), ("Required Option", "singleLineText"),
-        ("Missile Type", "singleLineText"), ("Missile Weight", "number"),
-        ("Impact Velocity", "number"),
     ],
     RAW: [
         ("Corrects Attempt ID", "singleLineText"), ("LabOS Verdict By", "singleLineText"),
@@ -64,6 +62,44 @@ ADDED = {
     ],
 }
 
+# **Applied to Testing, withdrawn from the read contract, never in
+# production.** These three were part of ADDED until 2026-09-10. They are not
+# deleted from the Testing Base — that is a later coordinated cleanup with the
+# Airtable team — so they still have to be asserted, just differently: present
+# in Testing, absent from production, and *not readable*. Dropping them from
+# ADDED without this set would have quietly retired the production guard that
+# is the whole reason they are safe to leave lying around.
+DEPRECATED_TESTING_ONLY = {
+    PROTOCOL_SECTIONS: [
+        ("Missile Type", "singleLineText"),
+        ("Missile Weight", "number"),
+        ("Impact Velocity", "number"),
+    ],
+}
+
+# **Decided and not yet created.** TA7b adds these two to the Testing Base.
+# Until that write happens they must be absent from *both* bases, and this
+# script says so out loud rather than silently not checking them. The day they
+# are created they move into ADDED — that move is the schema write's
+# acceptance criterion, not a tidy-up afterwards.
+PENDING_SCHEMA = {
+    RAW: [
+        ("Impact Classification", "singleSelect"),
+        ("Target Impact Velocity", "number"),
+    ],
+}
+
+# Type alone is not the contract for these. A singleSelect with the wrong
+# choices accepts nothing LabOS sends; a number with precision 0 silently
+# truncates 50.25 ft/s. Asserted whenever the field is present.
+EXPECTED_CHOICES = {
+    "Impact Classification": ["SMI", "LMI Level D", "LMI Level E"],
+}
+EXPECTED_PRECISION = {
+    "Target Impact Velocity": 2,
+}
+
+
 # …/ifet-project/ifet-management/src/management_service/app/airtable/preflight.py
 #  parents:  0 airtable  1 app  2 management_service  3 src  4 ifet-management
 #            5 ifet-project — the sibling checkout lives beside it.
@@ -75,6 +111,17 @@ SPEC = (pathlib.Path(__file__).resolve().parents[5] / "ifet-firmware" / "docs"
 def schema(base, token):
     tables = api("GET", f"https://api.airtable.com/v0/meta/bases/{base}/tables", token)["tables"]
     return {t["id"]: {f["name"]: f["type"] for f in t["fields"]} for t in tables}, tables
+
+
+def _options(tables, table_id, field_name):
+    """The live field's `options` dict, or None if the field is not there."""
+    for t in tables:
+        if t["id"] != table_id:
+            continue
+        for f in t["fields"]:
+            if f["name"] == field_name:
+                return f.get("options") or {}
+    return None
 
 
 def main(argv=None):
@@ -110,9 +157,74 @@ def main(argv=None):
                 print(f"   WRONG    {name}: {got} (document says {want})")
     print(f"   {n - len([f for f in fails])} of {n} present and correctly typed")
 
+    # -- 1a. the deprecated three are still there, and still unread --------
+    #
+    # Present, because we did not delete them and must not pretend we did.
+    # Unread, because that is what "withdrawn from the read contract" means -
+    # and the read boundary is `mirror.SECTION_FIELDS` itself, not a document
+    # describing it. A field that reappears there starts being copied again
+    # with nothing else changing, which is exactly the drift worth a gate.
+    print("\n1a. The withdrawn three: present in Testing, absent from the read boundary")
+    from .mirror import SECTION_FIELDS                       # noqa: PLC0415
+    for table, fields in DEPRECATED_TESTING_ONLY.items():
+        live = test_s.get(table, {})
+        for name, want in fields:
+            got = live.get(name)
+            if got is None:
+                fails.append(f"deprecated {name!r} has vanished from Testing - "
+                             "this script expects it left in place, not deleted")
+                print(f"   GONE     {name}")
+            elif got != want:
+                fails.append(f"deprecated {name!r} is {got!r}, expected {want!r}")
+            if name in SECTION_FIELDS:
+                fails.append(f"{name!r} is back in mirror.SECTION_FIELDS - "
+                             "LabOS would read it again")
+                print(f"   READABLE {name}  <-- withdrawn field is back on the allowlist")
+    print(f"   {sum(len(f) for f in DEPRECATED_TESTING_ONLY.values())} withdrawn, "
+          f"{len(SECTION_FIELDS)} fields on the read allowlist")
+
+    # -- 1b. the two TA7b fields, and exact shape once they exist ----------
+    print("\n1b. The two TA7b outbound fields")
+    for table, fields in PENDING_SCHEMA.items():
+        live = test_s.get(table, {})
+        for name, want in fields:
+            got = live.get(name)
+            if got is None:
+                print(f"   PENDING  {name} - not yet created (expected before "
+                      "the TA7b schema write)")
+                continue
+            if got != want:
+                fails.append(f"{name!r} is {got!r} in Testing, expected {want!r}")
+                print(f"   WRONG    {name}: {got}")
+                continue
+            opts = _options(test_t, table, name) or {}
+            if name in EXPECTED_CHOICES:
+                got_choices = [c["name"] for c in opts.get("choices", [])]
+                if got_choices != EXPECTED_CHOICES[name]:
+                    fails.append(f"{name!r} choices are {got_choices}, "
+                                 f"expected {EXPECTED_CHOICES[name]}")
+                    print(f"   CHOICES  {name}: {got_choices}")
+                    continue
+            if name in EXPECTED_PRECISION:
+                if opts.get("precision") != EXPECTED_PRECISION[name]:
+                    fails.append(f"{name!r} precision is {opts.get('precision')!r}, "
+                                 f"expected {EXPECTED_PRECISION[name]}")
+                    print(f"   PRECIS   {name}: {opts.get('precision')}")
+                    continue
+            print(f"   OK       {name} - created and correctly shaped. "
+                  "Move it from PENDING_SCHEMA into ADDED.")
+
     # -- 2. production untouched -------------------------------------------
     print("\n2. Production still has none of them")
-    leaked = [name for table, fields in ADDED.items()
+    # **All three sets, not just ADDED.** The withdrawn fields must never
+    # reach production either - they are the ones a stale change spec would
+    # have proposed - and the pending two must not appear there before they
+    # appear in Testing.
+    guarded = {**{t: list(f) for t, f in ADDED.items()}}
+    for group in (DEPRECATED_TESTING_ONLY, PENDING_SCHEMA):
+        for t, f in group.items():
+            guarded.setdefault(t, []).extend(f)
+    leaked = [name for table, fields in guarded.items()
               for name, _ in fields if name in prod_s.get(table, {})]
     if leaked:
         fails.append(f"production already has {leaked} — 'production is untouched' is false")
@@ -121,8 +233,11 @@ def main(argv=None):
         # Counted, not written out. This said "17" until 2026-09-08 and stayed
         # saying it after the eighteenth field was added — a status line that
         # cannot go stale is worth the one expression.
-        print(f"   none of the {sum(len(f) for f in ADDED.values())} "
-              "are in production")
+        print(f"   none of the {sum(len(f) for f in guarded.values())} "
+              "guarded fields are in production "
+              f"({sum(len(f) for f in ADDED.values())} added, "
+              f"{sum(len(f) for f in DEPRECATED_TESTING_ONLY.values())} withdrawn, "
+              f"{sum(len(f) for f in PENDING_SCHEMA.values())} pending)")
     p_count = sum(len(f) for f in prod_s.values())
     t_count = sum(len(f) for f in test_s.values())
     print(f"   production {p_count} fields · testing {t_count} fields · delta {t_count - p_count}")
@@ -133,7 +248,13 @@ def main(argv=None):
     # literal 17, it was the check that caught the eighteenth field — and then
     # it would have had to be edited by hand every time, which is how a gate
     # ends up asserting last month's truth.
-    expected = sum(len(f) for f in ADDED.values())
+    # The delta counts everything Testing has that production does not: the
+    # added fields, the withdrawn three that are still sitting there, and any
+    # pending field once it is created.
+    expected = sum(len(f) for f in ADDED.values()) \
+        + sum(len(f) for f in DEPRECATED_TESTING_ONLY.values()) \
+        + sum(1 for table, fields in PENDING_SCHEMA.items()
+              for name, _ in fields if name in test_s.get(table, {}))
     if t_count - p_count != expected:
         fails.append(f"delta is {t_count - p_count}, this script asserts "
                      f"{expected} field(s)")

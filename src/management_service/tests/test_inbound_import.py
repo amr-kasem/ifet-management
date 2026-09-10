@@ -342,8 +342,12 @@ class ImportGoesThroughTheOneCreatePath(_Base):
             self.assertEqual(len(tests), 2)
             self.assertEqual({t.airtable_section_id for t in tests},
                              {"recSEC_LMI", "recSEC_SMI"})
-            self.assertEqual({t.missile for t in tests},
-                             {"Large Missile D", "Small Missile A"})
+            # Each carries its own section's family. `missile` is **no longer
+            # pre-filled** — `Missile Type` left the read contract on
+            # 2026-09-10 — so both are None even though both sections carry a
+            # value in the mirror. That absence is the assertion.
+            self.assertEqual({t.impact_family for t in tests}, {"LMI", "SMI"})
+            self.assertEqual({t.missile for t in tests}, {None})
         finally:
             s.close()
 

@@ -216,9 +216,21 @@ def main(argv=None):
             continue
         live = schema.get(table, {}).get(field)
         if live is None:
-            if r["delivery_state"] != "OMITTED":
+            # **Two legitimate reasons to be absent, and they are different
+            # claims.** OMITTED says "decided against, never created".
+            # PENDING_SCHEMA says "decided for, not created yet" — the state a
+            # register row sits in between the decision and the schema write.
+            # Collapsing them would make the register unable to distinguish a
+            # field we refused from one we still owe.
+            if r["delivery_state"] not in ("OMITTED", "PENDING_SCHEMA"):
                 fail(3, f"{table}.{field} is absent from the base but is "
-                        f"{r['delivery_state']}, not OMITTED")
+                        f"{r['delivery_state']}, not OMITTED or PENDING_SCHEMA")
+            continue
+        if r["delivery_state"] == "PENDING_SCHEMA":
+            fail(3, f"{table}.{field} now EXISTS in the base but the register "
+                    "still says PENDING_SCHEMA — flip it to APPLIED with its "
+                    "field id, and move it from preflight.PENDING_SCHEMA into "
+                    "ADDED")
             continue
         checked += 1
         if live != r["airtable_type"]:
@@ -239,6 +251,35 @@ def main(argv=None):
         if want[f] != have[f]:
             fail(4, f"{f}: register {have[f]!r}, preflight {want[f]!r}")
     print(f"   {len(have)} APPLIED rows, {len(want)} preflight assertions")
+
+    # -- 4a. PENDING_SCHEMA rows are exactly preflight's pending set -------
+    #
+    # The register and the preflight script have to owe the same fields. If
+    # one of them forgets, the schema write either creates something no
+    # document claims or claims something it did not create.
+    print("\n4a. PENDING_SCHEMA rows are preflight's pending set")
+    pending_tree = _module(APP / "airtable" / "preflight.py")
+    pending = {}
+    for node in pending_tree.body:
+        if isinstance(node, ast.Assign) and \
+                getattr(node.targets[0], "id", None) == "PENDING_SCHEMA":
+            env = _literals(pending_tree)
+            for key, value in zip(node.value.keys, node.value.values):
+                name = env[key.id] if isinstance(key, ast.Name) else ast.literal_eval(key)
+                pending[name] = [tuple(ast.literal_eval(e)) for e in value.elts]
+    want_p = {name: typ for fields in pending.values() for name, typ in fields}
+    have_p = {r["airtable_field"]: r["airtable_type"] for r in rows
+              if r["delivery_state"] == "PENDING_SCHEMA"}
+    for f in sorted(set(want_p) - set(have_p)):
+        fail("4a", f"preflight has {f!r} pending but no register row says "
+                   "PENDING_SCHEMA")
+    for f in sorted(set(have_p) - set(want_p)):
+        fail("4a", f"register row {f!r} is PENDING_SCHEMA but preflight does "
+                   "not have it pending")
+    for f in sorted(set(want_p) & set(have_p)):
+        if want_p[f] != have_p[f]:
+            fail("4a", f"{f}: register {have_p[f]!r}, preflight {want_p[f]!r}")
+    print(f"   {len(have_p)} pending rows, {len(want_p)} pending assertions")
 
     # -- 5. every named source resolves to a real column ------------------
     print("\n5. Local sources resolve to real columns")

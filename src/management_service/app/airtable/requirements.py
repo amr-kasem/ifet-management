@@ -155,7 +155,12 @@ def snapshot(section):
     fields = ("requirement_code", "requirement_kind", "applicability",
               "required_value", "required_value_inward",
               "required_value_outward", "required_unit", "required_option",
-              "missile", "missile_weight", "impact_velocity", "section_name")
+              "section_name")
+    # `missile`, `missile_weight` and `impact_velocity` were frozen here until
+    # 2026-09-10. They are no longer read from Airtable, so freezing them would
+    # snapshot a value nothing populates - and a requirement snapshot carrying
+    # a permanently empty key claims the requirement exists and was blank,
+    # which is a different statement from "we do not read it".
     out = {"airtable_section_id": getattr(section, "record_id", None)}
     for name in fields:
         value = getattr(section, name, None)

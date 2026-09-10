@@ -166,6 +166,18 @@ PROSE = {
         "derived": "**One test type, not two.** Large missile and small missile are the same "
                    "procedure with a different missile, so the missile is a field on the "
                    "test and not a separate kind of test.\n\n"
+                   "**The impact classification is chosen in LabOS, not supplied by "
+                   "Airtable — your decision of 2026-09-10.** One value covers the "
+                   "missile, its weight and the target velocity: *SMI*, *LMI Level D* or "
+                   "*LMI Level E*. Airtable's requirement code already says whether a "
+                   "section is large missile or small, so that half is filled in for you "
+                   "and cannot be contradicted; the only thing anyone chooses is D or E, "
+                   "and only on a large-missile test. The classification is then sent "
+                   "back to Airtable with the result.\n\n"
+                   "**The target velocity is entered in LabOS too**, and it is not worked "
+                   "out from the classification: we hold no table that says which "
+                   "velocity each one means, and inventing one would put a number in "
+                   "every impact record that nobody had checked.\n\n"
                    "**One attempt per impact — as you specified on 2026-09-08.** An impact "
                    "test contains one or more attempts and each attempt is exactly one "
                    "impact, with its own pass/fail, its own photographs and its own "
@@ -381,7 +393,7 @@ def build():
                    f"{len(s_factors)} stages, {hold} s hold each, deflection readings per gauge"),
         "CYCLIC": ("the same pair — nothing further",
                    f"{len(c_high)} stages, {sum(c_counts):,} cycles in total"),
-        "IMPACT": ("missile, missile weight, how many impacts, target velocity",
+        "IMPACT": ("how many impacts — the classification is chosen in LabOS",
                    "one attempt per impact — each with its own pass/fail, photographs and verdict"),
         "FORCED_ENTRY": ("the grade to judge against — no numbers",
                          "one pass/fail verdict per attempt, with notes and photographs"),

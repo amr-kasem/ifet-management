@@ -40,10 +40,11 @@ OPTIONAL = "O"
 
 class Field:
     __slots__ = ("labos_name", "wire_name", "req", "v2", "kind", "options",
-                 "option_wire", "note", "omitted")
+                 "option_wire", "note", "omitted", "pending_schema")
 
     def __init__(self, labos_name, req, v2, kind, wire_name=None, options=None,
-                 option_wire=None, note="", omitted=False):
+                 option_wire=None, note="", omitted=False,
+                 pending_schema=False):
         self.labos_name = labos_name
         # What actually goes on the wire. Where the Airtable team chose a
         # different name, theirs wins — the LabOS name is internal vocabulary.
@@ -62,6 +63,13 @@ class Field:
         # from ABSENT, which is about the base not having the field at all.
         # An omitted field is a decision; an absent one is a fact.
         self.omitted = omitted
+        # **ABSENT for two different reasons, and the difference matters.**
+        # A JSON-only field is absent because it will never have a column of
+        # its own — the JSON valve is where it lives, permanently. A
+        # pending-schema field is absent because it has been decided and not
+        # yet created, and becomes PRESENT the day the schema write lands.
+        # Both are `ABSENT` today; only one of them is a design.
+        self.pending_schema = pending_schema
 
     def wire_option(self, value):
         """Translate a LabOS option to the spelling the base actually holds."""
@@ -181,6 +189,26 @@ FIELDS = [
     Field("Cycles Completed", CONDITIONAL, ABSENT, "number", note="§10.15 — carry in JSON"),
     Field("Impact Result", CONDITIONAL, PRESENT, "text/single select",
           note="§10.5 — option set unknown until probed"),
+    # -- the impact classification, outbound since 2026-09-10 --------------
+    #
+    # **Derived, never an input.** There is no column and no API field that
+    # sets it: `mapping.py` reads `MissileImpactTest.impact_classification`,
+    # which is a property over the stored family and level. A classification
+    # contradicting the Airtable requirement code is therefore unrepresentable
+    # rather than merely refused.
+    #
+    # `ABSENT` because production does not have it and will not until a
+    # coordinated change; the Testing Base gets it in TA7b.
+    Field("Impact Classification", CONDITIONAL, ABSENT, "single select",
+          options=["SMI", "LMI Level D", "LMI Level E"], pending_schema=True,
+          note="derived from impact_family + impact_level; Impact only"),
+    # The **target**, operator-entered in LabOS, ft/s. Never `shots.velocity`,
+    # which is the achieved value per impact and stays in the JSON only. No
+    # authoritative table derives this from the classification, so it is a
+    # value somebody typed and not one we computed.
+    Field("Target Impact Velocity", CONDITIONAL, ABSENT, "number",
+          pending_schema=True,
+          note="missile_impact_tests.target_velocity, ft/s; Impact only"),
     Field("Result Detail (JSON)", CONDITIONAL, RENAMED, "long text",
           wire_name="Complete LabOS JSON Response",
           note="granted in v2 — the extensibility valve, §6"),
@@ -347,7 +375,12 @@ TERMINAL_STATUSES = (COMPLETED, ABORTED)
 REQUIRED_BY_TEST_TYPE = {
     STATIC_LOAD: ("Test Result", "Result Detail (JSON)"),
     CYCLES: ("Cycles Completed", "Test Result", "Result Detail (JSON)"),
-    IMPACT: ("Impact Result", "Test Result", "Result Detail (JSON)"),
+    # Impact's terminal write now also carries what it ran under. Both are
+    # guaranteed present by the completion gate in `finish_attempt`, so
+    # requiring them here cannot strand an attempt that the API would have
+    # allowed to finish.
+    IMPACT: ("Impact Result", "Test Result", "Result Detail (JSON)",
+             "Impact Classification", "Target Impact Velocity"),
     FORCED_ENTRY: ("Test Result", "Result Detail (JSON)"),
     ANSI_Z97: ("Test Result", "Result Detail (JSON)"),
 }

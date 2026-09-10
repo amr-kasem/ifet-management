@@ -70,7 +70,13 @@ TERMINAL_EXTRA = {
     # Free text on the wire, but shaped like what `_impact_result` produces —
     # one attempt is one impact since §4.5a, so "2/2 shots" describes a model
     # that no longer exists and would mislead the next reader of this fixture.
+    # Since 2026-09-10 Impact's terminal write also carries what the attempt
+    # ran under. Both are guaranteed by the completion gate in
+    # `finish_attempt`, so requiring them on the wire cannot strand an attempt
+    # the API would have let finish.
     C.IMPACT: {"Impact Result": "Pass - impact 2 resisted",
+               "Impact Classification": "LMI Level D",
+               "Target Impact Velocity": 50.0,
                "LabOS Photos": [{"url": "https://labos.example/p.jpg"}]},
     C.FORCED_ENTRY: {},
     C.ANSI_Z97: {},
@@ -285,8 +291,19 @@ class JsonOnlyFieldsSurvive(unittest.TestCase):
                  "LabOS Version", "Result Rationale")
 
     def test_the_set_is_exactly_these_nine(self):
-        absent = tuple(f.labos_name for f in C.FIELDS if not f.expected_live)
+        # `pending_schema` fields are excluded deliberately: they are ABSENT
+        # for the other reason — decided and not yet created — and they become
+        # PRESENT when the Testing Base write lands. A JSON-only field never
+        # does. Conflating the two would make this assertion change every time
+        # a field is applied.
+        absent = tuple(f.labos_name for f in C.FIELDS
+                       if not f.expected_live and not f.pending_schema)
         self.assertEqual(absent, self.JSON_ONLY)
+
+    def test_the_pending_schema_fields_are_exactly_the_two_ta7b_adds(self):
+        pending = tuple(f.labos_name for f in C.FIELDS if f.pending_schema)
+        self.assertEqual(("Impact Classification", "Target Impact Velocity"),
+                         pending)
 
     def test_cycles_completed_reaches_the_json_not_a_column(self):
         w = build_terminal(terminal(C.CYCLES), live_options=live_options())
