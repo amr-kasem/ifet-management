@@ -1529,16 +1529,195 @@ def finish_manual_test(project_id: int, test_id: int, db: Session = Depends(get_
 def create_impact_test(project_id: int, body: ImpactTestCreateSchema,
                        db: Session = Depends(get_db)):
     """Create the test. Missile and weight are optional — the protocol fixes
-    them, so requiring them per test was retyping rather than data capture."""
+    them, so requiring them per test was retyping rather than data capture.
+
+    The classification and target velocity are optional here too, and for a
+    different reason: neither is known when the test object is made. They are
+    required by the time an attempt completes, and `PATCH` is how they arrive.
+    """
     _require_project(db, project_id)
+
+    # **The binding is this test's own `airtable_section_id`, not its
+    # project's.** A project can be Airtable-bound while a test added to it is
+    # not, so the project-level identity is not authority over this row.
+    #
+    # A bound test created here must not end up with a NULL family. This is a
+    # real product path, not a vestigial one: MANUAL_TESTS_API.md section 7
+    # tells the UI to send `airtable_*` "from the mirror" for an
+    # Airtable-linked job, so the route has to derive the family the same way
+    # `importer.bind` does — from the section's requirement code, through the
+    # one shared mapping.
+    impact_family = _family_for(db, body.airtable_section_id,
+                                body.impact_family)
+    _refuse_level_without_lmi(impact_family, body.impact_level)
+
     test = MissileImpactTest(
         project_id=project_id, missile=body.missile,
         missile_weight=body.missile_weight,
         airtable_protocol_id=body.airtable_protocol_id,
         airtable_section_id=body.airtable_section_id,
         airtable_section_name=body.airtable_section_name,
+        impact_family=impact_family,
+        impact_level=body.impact_level,
+        target_velocity=body.target_velocity,
     )
     db.add(test)
+    db.commit()
+    db.refresh(test)
+    return test
+
+
+def _family_for(db, section_id, supplied):
+    """The impact family for a test being created.
+
+    Unbound: whatever the operator supplied, including nothing — a LabOS-only
+    test has no requirement code to own it, and may acquire one later through
+    `PATCH`.
+
+    Bound: resolved from the section, never from the client. The mapping is
+    `importer.IMPACT_FAMILY_BY_CODE`, the same object `bind` uses, so the two
+    creation paths cannot drift.
+    """
+    if not section_id:
+        return supplied
+
+    if supplied is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"impact_family is owned by the bound Airtable requirement "
+                    f"code for section {section_id} and cannot be supplied or "
+                    "overridden here. Omit it — it is resolved from the "
+                    "section."))
+
+    section = (db.query(mirror.AtMirrorSection)
+               .filter(mirror.AtMirrorSection.record_id == section_id).first())
+    if section is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"Protocol Section {section_id} is not in the mirror, so "
+                    "the impact family it owns cannot be resolved. Refresh the "
+                    "mirror, or create the test without a section id."))
+
+    family = importer.IMPACT_FAMILY_BY_CODE.get(section.requirement_code)
+    if family is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(f"Protocol Section {section_id} carries requirement code "
+                    f"{section.requirement_code!r}, which is not an impact "
+                    "requirement. An impact test binds to IMPACT_SMI or "
+                    "IMPACT_LMI only."))
+    return family
+
+
+def _refuse_level_without_lmi(family, level):
+    """A level is meaningful only for LMI. The database refuses SMI + level;
+    this refuses it with a sentence rather than an IntegrityError, and also
+    catches the family-not-yet-known case the CHECK deliberately permits."""
+    if level is None:
+        return
+    if family == "SMI":
+        raise HTTPException(
+            status_code=400,
+            detail="impact_level applies to LMI only; this test is SMI.")
+    if family is None:
+        raise HTTPException(
+            status_code=400,
+            detail=("impact_level cannot be set before the impact family is "
+                    "known. For an Airtable-bound test the importer sets it "
+                    "from the requirement code; for a LabOS-only test supply "
+                    "impact_family first."))
+
+
+def _any_attempts(test):
+    """Every attempt of this test, **including aborted ones**.
+
+    A different bar from `_completed_attempts`, deliberately. The impact
+    family is the context an attempt was run in — an abort still happened
+    against a particular missile, and re-labelling the test afterwards would
+    rewrite what that attempt meant. So execution beginning at all fixes the
+    family, while the level and the target velocity stay editable until an
+    attempt actually completes.
+    """
+    return list(test.trials or [])
+
+
+def _completed_attempts(db, test):
+    """Attempts of this test that actually completed.
+
+    **Aborted attempts do not count.** An abort is a run that produced no
+    result, so a test whose only history is an abort has recorded nothing and
+    must stay editable — otherwise one abandoned attempt would freeze the
+    classification of a test that has never produced a result.
+    """
+    return [a for a in (test.trials or []) if a.status == _COMPLETED]
+
+
+@app.patch("/projects/{project_id}/impact-tests/{test_id}",
+           response_model=ImpactTestSchema)
+def update_impact_test(project_id: int, test_id: int,
+                       body: ImpactTestUpdateSchema,
+                       db: Session = Depends(get_db)):
+    """Set the impact level and target velocity before an attempt completes.
+
+    None of them is required when the test is created, so this is the
+    supported route that supplies them afterwards.
+
+    Two different lifetimes, deliberately. `impact_family` is write-once and
+    LabOS-only: a bound test's family belongs to its requirement code, and any
+    attempt at all — aborted included — fixes it, because the family is the
+    context that attempt ran in. `impact_level` and `target_velocity` stay
+    editable until an attempt *completes*, because until then nothing has been
+    claimed.
+    """
+    test = _require_test(db, MissileImpactTest, project_id, test_id,
+                         "Impact test")
+    fields = body.model_dump(exclude_unset=True)
+
+    # -- the family: write-once, and only ever for a LabOS-only test --------
+    if "impact_family" in fields:
+        if test.airtable_section_id:
+            raise HTTPException(
+                status_code=400,
+                detail=("impact_family is owned by the bound Airtable "
+                        "requirement code for section "
+                        f"{test.airtable_section_id} and is not editable."))
+        started = _any_attempts(test)
+        if started:
+            raise HTTPException(
+                status_code=409,
+                detail=(f"this test has {len(started)} attempt(s); execution "
+                        "has begun, so the impact family is fixed. Changing it "
+                        "now would change what those attempts were run "
+                        "against."))
+        # The level **after** this request, not the one already stored:
+        # `fields.get` cannot tell "not sent" from "explicitly cleared", so
+        # clearing the level and switching to SMI in one call has to be
+        # allowed rather than refused by its own leftover value.
+        resulting_level = (fields["impact_level"] if "impact_level" in fields
+                           else test.impact_level)
+        if fields["impact_family"] == "SMI" and resulting_level:
+            raise HTTPException(
+                status_code=400,
+                detail=("this test carries a level, which applies to LMI only. "
+                        "Clear impact_level in the same request to make it "
+                        "SMI."))
+        test.impact_family = fields["impact_family"]
+
+    # -- the level and the velocity: editable until a result exists ---------
+    if "impact_level" in fields or "target_velocity" in fields:
+        done = _completed_attempts(db, test)
+        if done:
+            raise HTTPException(
+                status_code=409,
+                detail=(f"this test has {len(done)} completed attempt(s); the "
+                        "level and target velocity it ran under cannot be "
+                        "changed afterwards. Record a correction instead."))
+    if "impact_level" in fields:
+        _refuse_level_without_lmi(test.impact_family, fields["impact_level"])
+        test.impact_level = fields["impact_level"]
+    if "target_velocity" in fields:
+        test.target_velocity = fields["target_velocity"]
+
     db.commit()
     db.refresh(test)
     return test
@@ -1628,6 +1807,34 @@ def finish_attempt(test_result_id: int, body: AttemptFinishSchema,
                     status_code=400,
                     detail="A completed impact attempt requires at least one "
                            "photograph. Evidence cannot be added after review.")
+            # **The classification and the target velocity, checked here and
+            # not at creation.** Neither is known when the test object is
+            # made; both are part of what the attempt is a result *of*, so
+            # the last honest moment to require them is the moment a result
+            # becomes a claim. An abort never reaches this branch.
+            # `ImpactTestResult.missile_impact_test` is the existing
+            # relationship; no new lookup is needed.
+            parent = impact.missile_impact_test
+            if parent is not None:
+                if parent.impact_classification is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "A completed impact attempt records which missile "
+                            "classification it ran under. This test is "
+                            f"{parent.impact_family or 'unclassified'}"
+                            + (" and needs its level (D or E)."
+                               if parent.impact_family == "LMI" else
+                               " — set the impact family first.")
+                            + " Set it on the test, or supply `abort_reason` "
+                              "to abandon the attempt."))
+                if parent.target_velocity is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=("A completed impact attempt records the target "
+                                "velocity it ran against. Set target_velocity "
+                                "on the test, or supply `abort_reason` to "
+                                "abandon the attempt."))
         elif body.result is None:
             raise HTTPException(
                 status_code=400,

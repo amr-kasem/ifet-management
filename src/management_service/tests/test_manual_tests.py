@@ -367,9 +367,17 @@ class Impact(_Base):
 
     def setUp(self):
         super().setUp()
+        # A LabOS-only impact test, so the family is the operator's to set —
+        # there is no bound section owning it. Classification and target
+        # velocity are supplied here because an attempt cannot *complete*
+        # without them since 2026-09-10; they are still optional at creation,
+        # which `test_missile_metadata_is_optional` pins.
         t = self.client.post("/projects/1/impact-tests/",
                              json={"missile": "Large Missile D",
-                                   "missile_weight": 9.0}).json()
+                                   "missile_weight": 9.0,
+                                   "impact_family": "LMI",
+                                   "impact_level": "D",
+                                   "target_velocity": 50.0}).json()
         self.test_id = t["id"]
         self.attempt = self.start("/projects/1/impact-tests", t["id"])
 
@@ -598,6 +606,415 @@ class Impact(_Base):
         self.assertEqual(r.status_code, 400)
 
 
+class ImpactClassificationOwnership(_Base):
+    """Airtable owns the impact family; LabOS owns the level and the velocity.
+
+    `Requirement Code` already says IMPACT_SMI or IMPACT_LMI, so letting an
+    operator choose the family would create a second source of truth that can
+    contradict the first. These tests pin that they cannot.
+
+    The authority is **this test's own `airtable_section_id`**, not its
+    project's: a project can be Airtable-bound while a test added to it is not.
+
+    `Impact Classification` is derived output only. There is no column for it
+    and no API field that sets it, so a classification disagreeing with the
+    requirement is unrepresentable rather than merely refused.
+    """
+
+    URL = "/projects/1/impact-tests/"
+
+    def make(self, **body):
+        return self.client.post(self.URL, json=body)
+
+    def labos_only(self, **over):
+        body = {"impact_family": "LMI", "impact_level": "D",
+                "target_velocity": 50.0}
+        body.update(over)
+        r = self.make(**body)
+        self.assertEqual(r.status_code, 200, r.text)
+        return r.json()
+
+    def _mirror_section(self, record_id, code):
+        """A mirrored Protocol Section the create route can resolve."""
+        from app.airtable import requirements as req
+        from app.airtable.mirror import AtMirrorSection
+        s = self.Session()
+        try:
+            s.add(AtMirrorSection(record_id=record_id,
+                                  protocol_record_id="recPROT000000001",
+                                  section_name=code, requirement_code=code,
+                                  requirement_kind=req.KIND_BY_CODE[code],
+                                  applicability="Required",
+                                  required_value=3.0,
+                                  required_unit="impacts"))
+            s.commit()
+        finally:
+            s.close()
+
+    def bound(self, section="recSEC000000001", code="IMPACT_LMI", **over):
+        """A test bound to a Protocol Section, as the UI creates one.
+
+        `MANUAL_TESTS_API.md` section 7 tells the UI to send `airtable_*`
+        "from the mirror" for an Airtable-linked job, so this is a real
+        product path and not only what `importer.bind` produces.
+        """
+        if code is not None:
+            self._mirror_section(section, code)
+        body = {"airtable_section_id": section}
+        body.update(over)
+        return self.make(**body)
+
+    # -- the vocabulary lives in Pydantic, not the database ---------------
+
+    def test_an_unknown_family_is_refused_by_the_schema(self):
+        self.assertEqual(422, self.make(impact_family="LARGE").status_code)
+
+    def test_an_unknown_level_is_refused_by_the_schema(self):
+        self.assertEqual(
+            422, self.make(impact_family="LMI", impact_level="F").status_code)
+
+    def test_the_accepted_families_and_levels_are_exactly_these(self):
+        from app.data.schema import IMPACT_FAMILIES, IMPACT_LEVELS
+        self.assertEqual(("SMI", "LMI"), IMPACT_FAMILIES)
+        self.assertEqual(("D", "E"), IMPACT_LEVELS)
+
+    # -- the binding is resource-level, and it is the authority -----------
+
+    def test_a_bound_test_refuses_an_operator_supplied_family(self):
+        r = self.bound(impact_family="SMI")
+        self.assertEqual(400, r.status_code)
+        self.assertIn("owned by the bound Airtable requirement code",
+                      r.json()["detail"])
+
+    def test_a_labos_only_test_may_set_its_own_family(self):
+        self.assertEqual("SMI", self.labos_only(
+            impact_family="SMI", impact_level=None)["impact_family"])
+
+    def test_the_authority_is_the_tests_own_section_not_its_project(self):
+        """The project is Airtable-bound in this fixture either way; what
+        decides is whether *this test* carries a section id."""
+        self.assertEqual(400, self.bound(impact_family="LMI").status_code)
+        self.assertEqual(200, self.make(impact_family="LMI").status_code)
+
+    # -- SMI never carries a level ----------------------------------------
+
+    def test_creating_smi_with_a_level_is_refused(self):
+        r = self.make(impact_family="SMI", impact_level="D")
+        self.assertEqual(400, r.status_code)
+        self.assertIn("LMI only", r.json()["detail"])
+
+    def test_patching_a_level_onto_smi_is_refused(self):
+        t = self.labos_only(impact_family="SMI", impact_level=None)
+        r = self.client.patch(f"{self.URL}{t['id']}", json={"impact_level": "D"})
+        self.assertEqual(400, r.status_code)
+        self.assertIn("LMI only", r.json()["detail"])
+
+    def test_a_level_before_the_family_is_known_is_refused(self):
+        """The DB CHECK permits this deliberately — the family may not be
+        known yet. The route is what refuses it, which is the middle tier
+        doing its job."""
+        r = self.make(impact_level="D")
+        self.assertEqual(400, r.status_code)
+        self.assertIn("before the impact family is known", r.json()["detail"])
+
+    def test_patch_cannot_set_the_family_on_a_bound_test(self):
+        """Refused with a sentence, not ignored — a silent no-op would read
+        as acceptance."""
+        self._mirror_section("recSEC_BOUND1", "IMPACT_LMI")
+        t = self.client.post(self.URL,
+                             json={"airtable_section_id": "recSEC_BOUND1"}).json()
+        r = self.client.patch(f"{self.URL}{t['id']}",
+                              json={"impact_family": "SMI"})
+        self.assertEqual(400, r.status_code)
+        self.assertIn("owned by the bound Airtable requirement code",
+                      r.json()["detail"])
+
+    # -- the derived value -------------------------------------------------
+
+    def test_the_classification_is_derived_for_each_case(self):
+        for family, level, expected in (("SMI", None, "SMI"),
+                                        ("LMI", "D", "LMI Level D"),
+                                        ("LMI", "E", "LMI Level E")):
+            with self.subTest(family=family, level=level):
+                t = self.labos_only(impact_family=family, impact_level=level)
+                self.assertEqual(expected, t["impact_classification"])
+
+    def test_an_lmi_without_a_level_has_no_classification_yet(self):
+        t = self.labos_only(impact_level=None)
+        self.assertIsNone(t["impact_classification"])
+
+    def test_the_classification_is_not_an_api_input(self):
+        """Sending it changes nothing: it is not a field on the create schema
+        and there is nowhere for it to land."""
+        r = self.make(impact_family="SMI", impact_classification="LMI Level E")
+        self.assertEqual(200, r.status_code)
+        self.assertEqual("SMI", r.json()["impact_classification"])
+
+    # -- optional at creation, required at completion ---------------------
+
+    def test_both_are_optional_when_the_test_is_created(self):
+        t = self.make().json()
+        self.assertIsNone(t["impact_family"])
+        self.assertIsNone(t["target_velocity"])
+
+    def _one_impact(self, test_id):
+        attempt = self.start("/projects/1/impact-tests", test_id)
+        shot = self.client.post(f"/test-results/{attempt['id']}/shots",
+                                json={"result": True}).json()
+        self.client.post(f"/shots/{shot['id']}/photos", files=_jpeg())
+        return attempt
+
+    def test_an_lmi_without_a_level_cannot_complete(self):
+        t = self.labos_only(impact_level=None)
+        attempt = self._one_impact(t["id"])
+        r = self.finish(attempt["id"], result=True)
+        self.assertEqual(400, r.status_code)
+        self.assertIn("needs its level", r.json()["detail"])
+
+    def test_a_test_without_a_target_velocity_cannot_complete(self):
+        t = self.labos_only(target_velocity=None)
+        attempt = self._one_impact(t["id"])
+        r = self.finish(attempt["id"], result=True)
+        self.assertEqual(400, r.status_code)
+        self.assertIn("target velocity", r.json()["detail"])
+
+    def test_patch_supplies_them_and_then_it_completes(self):
+        """The reason the route exists: an LMI test created with neither the
+        level nor the velocity cannot complete, and PATCH is the supported way
+        to supply both before it does."""
+        t = self.labos_only(impact_level=None, target_velocity=None)
+        self.assertIsNone(t["impact_classification"])
+
+        r = self.client.patch(f"{self.URL}{t['id']}",
+                              json={"impact_level": "E", "target_velocity": 55.0})
+        self.assertEqual(200, r.status_code, r.text)
+        self.assertEqual("LMI Level E", r.json()["impact_classification"])
+        self.assertEqual(55.0, r.json()["target_velocity"])
+
+        attempt = self._one_impact(t["id"])
+        self.assertEqual(200, self.finish(attempt["id"], result=True).status_code)
+
+    def test_an_abort_needs_neither(self):
+        """An abort produced no result, so it claims nothing to be wrong."""
+        t = self.labos_only(impact_level=None, target_velocity=None)
+        attempt = self.start("/projects/1/impact-tests", t["id"])
+        r = self.finish(attempt["id"], abort_reason="Equipment Fault")
+        self.assertEqual(200, r.status_code, r.text)
+
+    # -- immutability: completed freezes the level, aborted does not ------
+
+    def test_a_completed_attempt_freezes_the_level(self):
+        t = self.labos_only()
+        attempt = self._one_impact(t["id"])
+        self.assertEqual(200, self.finish(attempt["id"], result=True).status_code)
+        r = self.client.patch(f"{self.URL}{t['id']}", json={"impact_level": "E"})
+        self.assertEqual(409, r.status_code)
+        self.assertIn("completed attempt", r.json()["detail"])
+
+    def test_an_aborted_attempt_does_not_freeze_the_level(self):
+        """**The distinction that matters for the level.** An abort recorded
+        no result, so nothing has been claimed yet. (The *family* is stricter
+        — see ALabosOnlyTestCanAcquireItsFamily.)"""
+        t = self.labos_only()
+        attempt = self.start("/projects/1/impact-tests", t["id"])
+        self.assertEqual(200, self.finish(attempt["id"],
+                                          abort_reason="Equipment Fault").status_code)
+        r = self.client.patch(f"{self.URL}{t['id']}", json={"impact_level": "E"})
+        self.assertEqual(200, r.status_code, r.text)
+        self.assertEqual("LMI Level E", r.json()["impact_classification"])
+
+    def test_an_abort_then_a_completion_does_freeze(self):
+        """The abort is not what freezes the level; the completion is."""
+        t = self.labos_only()
+        first = self.start("/projects/1/impact-tests", t["id"])
+        self.finish(first["id"], abort_reason="Equipment Fault")
+        second = self._one_impact(t["id"])
+        self.finish(second["id"], result=True)
+        self.assertEqual(409, self.client.patch(
+            f"{self.URL}{t['id']}", json={"impact_level": "E"}).status_code)
+
+
+
+class BoundCreateResolvesTheFamilyServerSide(_Base):
+    """A bound test created through the generic POST must not end up NULL.
+
+    This is a documented product path — `MANUAL_TESTS_API.md` section 7 tells
+    the UI to send `airtable_*` "from the mirror" — so the route resolves the
+    family the same way `importer.bind` does, through the one shared
+    `IMPACT_FAMILY_BY_CODE` mapping rather than a second copy of the rule.
+    """
+
+    URL = "/projects/1/impact-tests/"
+
+    def section(self, record_id, code):
+        from app.airtable import requirements as req
+        from app.airtable.mirror import AtMirrorSection
+        s = self.Session()
+        try:
+            s.add(AtMirrorSection(record_id=record_id,
+                                  protocol_record_id="recPROT000000001",
+                                  section_name=code, requirement_code=code,
+                                  requirement_kind=req.KIND_BY_CODE[code],
+                                  applicability="Required",
+                                  required_value=3.0,
+                                  required_unit=("impacts" if code.startswith("IMPACT")
+                                                 else None),
+                                  required_option=("Class A" if code == "ANSI_IMPACT"
+                                                   else None)))
+            s.commit()
+        finally:
+            s.close()
+
+    def create(self, **body):
+        return self.client.post(self.URL, json=body)
+
+    def test_an_smi_section_stores_smi(self):
+        self.section("recSEC_SMI", "IMPACT_SMI")
+        r = self.create(airtable_section_id="recSEC_SMI")
+        self.assertEqual(200, r.status_code, r.text)
+        self.assertEqual("SMI", r.json()["impact_family"])
+        self.assertEqual("SMI", r.json()["impact_classification"])
+
+    def test_an_lmi_section_stores_lmi(self):
+        self.section("recSEC_LMI", "IMPACT_LMI")
+        r = self.create(airtable_section_id="recSEC_LMI")
+        self.assertEqual(200, r.status_code, r.text)
+        self.assertEqual("LMI", r.json()["impact_family"])
+        # The level is still the operator's, so there is no classification yet.
+        self.assertIsNone(r.json()["impact_level"])
+        self.assertIsNone(r.json()["impact_classification"])
+
+    def test_a_bound_create_never_leaves_the_family_null(self):
+        """The defect this closes: a bound test that can never finish."""
+        for code in ("IMPACT_SMI", "IMPACT_LMI"):
+            with self.subTest(code=code):
+                self.section(f"recSEC_{code}", code)
+                r = self.create(airtable_section_id=f"recSEC_{code}")
+                self.assertIsNotNone(r.json()["impact_family"])
+
+    def test_a_client_cannot_override_the_bound_family(self):
+        self.section("recSEC_SMI2", "IMPACT_SMI")
+        r = self.create(airtable_section_id="recSEC_SMI2", impact_family="LMI")
+        self.assertEqual(400, r.status_code)
+        self.assertIn("cannot be supplied or overridden", r.json()["detail"])
+
+    def test_even_an_agreeing_family_is_refused(self):
+        """Refused because it is not the client's to send, not because it
+        disagrees — agreeing today and drifting tomorrow is the failure."""
+        self.section("recSEC_SMI3", "IMPACT_SMI")
+        r = self.create(airtable_section_id="recSEC_SMI3", impact_family="SMI")
+        self.assertEqual(400, r.status_code)
+
+    def test_an_unknown_section_is_refused(self):
+        r = self.create(airtable_section_id="recSEC_NOT_IN_MIRROR")
+        self.assertEqual(400, r.status_code)
+        self.assertIn("not in the mirror", r.json()["detail"])
+
+    def test_a_non_impact_section_cannot_be_bound_to_an_impact_test(self):
+        self.section("recSEC_ANSI", "ANSI_IMPACT")
+        r = self.create(airtable_section_id="recSEC_ANSI")
+        self.assertEqual(400, r.status_code)
+        self.assertIn("not an impact requirement", r.json()["detail"])
+
+    def test_a_static_section_cannot_be_bound_either(self):
+        self.section("recSEC_STATIC", "STATIC_PRESSURE")
+        self.assertEqual(400,
+                         self.create(airtable_section_id="recSEC_STATIC").status_code)
+
+    def test_the_route_and_the_importer_share_one_mapping(self):
+        """Not two copies of the SMI/LMI rule that can drift."""
+        from app.airtable.importer import IMPACT_FAMILY_BY_CODE
+        from app import main
+        self.assertIs(IMPACT_FAMILY_BY_CODE,
+                      main.importer.IMPACT_FAMILY_BY_CODE)
+        self.assertEqual({"IMPACT_SMI": "SMI", "IMPACT_LMI": "LMI"},
+                         IMPACT_FAMILY_BY_CODE)
+
+
+class ALabosOnlyTestCanAcquireItsFamily(_Base):
+    """The lifecycle defect: `{}` created, then never finishable.
+
+    `impact_family` was write-never through PATCH, and a LabOS-only test has
+    no requirement code to supply one at creation. A test made with `{}` could
+    therefore never be classified and never complete an attempt.
+    """
+
+    URL = "/projects/1/impact-tests/"
+
+    def blank(self):
+        r = self.client.post(self.URL, json={})
+        self.assertEqual(200, r.status_code, r.text)
+        return r.json()
+
+    def patch(self, test_id, **body):
+        return self.client.patch(f"{self.URL}{test_id}", json=body)
+
+    def _one_impact(self, test_id):
+        attempt = self.start("/projects/1/impact-tests", test_id)
+        shot = self.client.post(f"/test-results/{attempt['id']}/shots",
+                                json={"result": True}).json()
+        self.client.post(f"/shots/{shot['id']}/photos", files=_jpeg())
+        return attempt
+
+    def test_a_blank_test_can_be_classified_and_then_finished(self):
+        """End to end, and the whole point of the correction."""
+        t = self.blank()
+        self.assertIsNone(t["impact_family"])
+
+        r = self.patch(t["id"], impact_family="SMI", target_velocity=130.0)
+        self.assertEqual(200, r.status_code, r.text)
+        self.assertEqual("SMI", r.json()["impact_classification"])
+
+        attempt = self._one_impact(t["id"])
+        self.assertEqual(200, self.finish(attempt["id"], result=True).status_code)
+
+    def test_it_can_become_lmi_with_a_level_in_one_request(self):
+        t = self.blank()
+        r = self.patch(t["id"], impact_family="LMI", impact_level="E",
+                       target_velocity=55.0)
+        self.assertEqual(200, r.status_code, r.text)
+        self.assertEqual("LMI Level E", r.json()["impact_classification"])
+
+    def test_the_family_is_fixed_once_any_attempt_exists(self):
+        t = self.blank()
+        self.patch(t["id"], impact_family="LMI", impact_level="D",
+                   target_velocity=50.0)
+        self.start("/projects/1/impact-tests", t["id"])
+        r = self.patch(t["id"], impact_family="SMI")
+        self.assertEqual(409, r.status_code)
+        self.assertIn("execution has begun", r.json()["detail"])
+
+    def test_even_an_aborted_attempt_fixes_the_family(self):
+        """**Stricter than the level and velocity rule, deliberately.** An
+        abort still ran against a missile; relabelling the test afterwards
+        would change what that attempt meant."""
+        t = self.blank()
+        self.patch(t["id"], impact_family="LMI", impact_level="D",
+                   target_velocity=50.0)
+        attempt = self.start("/projects/1/impact-tests", t["id"])
+        self.finish(attempt["id"], abort_reason="Equipment Fault")
+
+        self.assertEqual(409, self.patch(t["id"], impact_family="SMI").status_code)
+        # ...while the level and the velocity are still editable, because no
+        # attempt has completed.
+        self.assertEqual(200, self.patch(t["id"], impact_level="E",
+                                         target_velocity=55.0).status_code)
+
+    def test_switching_to_smi_while_a_level_is_stored_is_refused(self):
+        t = self.blank()
+        self.patch(t["id"], impact_family="LMI", impact_level="D")
+        r = self.patch(t["id"], impact_family="SMI")
+        self.assertEqual(400, r.status_code)
+        self.assertIn("applies to LMI only", r.json()["detail"])
+
+    def test_switching_to_smi_and_clearing_the_level_together_works(self):
+        t = self.blank()
+        self.patch(t["id"], impact_family="LMI", impact_level="D")
+        r = self.patch(t["id"], impact_family="SMI", impact_level=None)
+        self.assertEqual(200, r.status_code, r.text)
+        self.assertEqual("SMI", r.json()["impact_classification"])
+
+
 class TheImpactClassificationIsDerivedFromTheModel(_Base):
     """`Impact Classification` is computed, not stored.
 
@@ -638,7 +1055,7 @@ class TheImpactClassificationIsDerivedFromTheModel(_Base):
 
 class TheDatabaseRefusesSmiWithALevel(_Base):
     """The one structural invariant, checked at the database and not only in
-    the route - so bypassing the API cannot produce the state either."""
+    the route — so bypassing the API cannot produce the state either."""
 
     def test_the_check_constraint_exists_and_is_named(self):
         from app.data.models import MissileImpactTest

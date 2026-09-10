@@ -126,7 +126,7 @@ class MissileImpactTestSchema(MissileImpactTestCreateSchema):
 
     # **The project payload is what the UI actually loads**, so the impact
     # classification has to be visible here and not only on the per-test
-    # route - a screen that reads the project once must see it.
+    # route — a screen that reads the project once must see it.
     #
     # `impact_classification` is read-only and computed on the model. It is
     # returned rather than left to the client so the derivation rule lives in
@@ -540,8 +540,54 @@ class ImpactTestCreateSchema(BaseModel):
     airtable_section_id: Optional[str] = None
     airtable_section_name: Optional[str] = None
 
+    # Optional at creation by design: neither is known when the test object is
+    # made, and both are required only by the time an attempt completes.
+    # `impact_family` is accepted here ONLY for a test with no
+    # airtable_section_id - the route enforces that, because this schema
+    # cannot see the binding.
+    impact_family: Optional[str] = None
+    impact_level: Optional[str] = None
+    target_velocity: Optional[float] = None
+
+    _v_family = field_validator("impact_family")(_validate_family)
+    _v_level = field_validator("impact_level")(_validate_level)
+
     class Config:
         from_attributes = True
+
+
+class ImpactTestUpdateSchema(BaseModel):
+    """Set the classification and target velocity before completion.
+
+    Exists because none of these is required when the test is created, so
+    there has to be a supported route to supply them afterwards.
+
+    `impact_family` is **write-once and LabOS-only**. An earlier draft omitted
+    it entirely, which left a test created with `{}` unable ever to acquire a
+    family and therefore unable ever to finish. The route allows it while the
+    test is unbound and unexecuted, and refuses it otherwise: a bound test's
+    family belongs to its requirement code, and once any attempt exists —
+    aborted included — the family is the context that attempt ran in, so
+    changing it would rewrite what the attempt meant.
+
+    `impact_level` and `target_velocity` keep the looser rule: editable until
+    an attempt actually *completes*, because until then nothing has been
+    claimed.
+    """
+
+    impact_family: Optional[str] = None
+    impact_level: Optional[str] = None
+    target_velocity: Optional[float] = None
+
+    _v_family = field_validator("impact_family")(_validate_family)
+    _v_level = field_validator("impact_level")(_validate_level)
+
+    class Config:
+        from_attributes = True
+        # **Refuse an unknown key rather than ignore it.** A client sending a
+        # field this schema does not carry would otherwise get a 200 and no
+        # change, which reads as acceptance.
+        extra = "forbid"
 
 
 class ImpactTestSchema(BaseModel):
@@ -554,6 +600,13 @@ class ImpactTestSchema(BaseModel):
     airtable_protocol_id: Optional[str] = None
     airtable_section_id: Optional[str] = None
     airtable_section_name: Optional[str] = None
+
+    impact_family: Optional[str] = None
+    impact_level: Optional[str] = None
+    target_velocity: Optional[float] = None
+    # Read-only, computed on the model. Returned so the UI renders the value
+    # rather than recomputing the rule and drifting from it.
+    impact_classification: Optional[str] = None
 
     trials: List[AttemptSchema] = []
 

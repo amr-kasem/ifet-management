@@ -124,9 +124,14 @@ class _Base(unittest.TestCase):
         return r.json()
 
     def impact_test(self):
+        # LabOS-only, so the family is the operator's; classification and
+        # target velocity are required before an attempt can complete.
         r = self.client.post("/projects/1/impact-tests/",
                              json={"missile": "Large Missile D",
-                                   "missile_weight": 9.0})
+                                   "missile_weight": 9.0,
+                                   "impact_family": "LMI",
+                                   "impact_level": "D",
+                                   "target_velocity": 50.0})
         self.assertEqual(r.status_code, 200, r.text)
         self.link_test("missile_impact_tests", r.json()["id"])
         return r.json()

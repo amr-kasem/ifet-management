@@ -165,7 +165,14 @@ class ManualAndImpactRoundTrip(_Base):
 
     def _create(self, kind, **body):
         if kind == "impact":
-            r = self.client.post("/projects/1/impact-tests/", json=body or {})
+            # LabOS-only, so the family is the operator's to set. Since
+            # 2026-09-10 an impact attempt cannot *complete* without a
+            # classification and a target velocity, so a factory that omits
+            # them produces a test no round-trip can finish.
+            impact = {"impact_family": "LMI", "impact_level": "D",
+                      "target_velocity": 50.0}
+            impact.update(body)
+            r = self.client.post("/projects/1/impact-tests/", json=impact)
             table = "missile_impact_tests"
         else:
             r = self.client.post("/projects/1/manual-tests/", json=body)
