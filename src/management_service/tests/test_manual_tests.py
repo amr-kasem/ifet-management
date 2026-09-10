@@ -598,5 +598,88 @@ class Impact(_Base):
         self.assertEqual(r.status_code, 400)
 
 
+class TheImpactClassificationIsDerivedFromTheModel(_Base):
+    """`Impact Classification` is computed, not stored.
+
+    Tested against the model rather than through a route on purpose: there is
+    no column for it and no API field that sets it, so the derivation is the
+    whole of its definition. A route test would prove the route, not the rule.
+    """
+
+    def test_smi_derives_smi(self):
+        from app.data.models import MissileImpactTest
+        self.assertEqual(
+            "SMI", MissileImpactTest(impact_family="SMI").impact_classification)
+
+    def test_lmi_with_a_level_derives_the_level(self):
+        from app.data.models import MissileImpactTest
+        for level, expected in (("D", "LMI Level D"), ("E", "LMI Level E")):
+            with self.subTest(level=level):
+                t = MissileImpactTest(impact_family="LMI", impact_level=level)
+                self.assertEqual(expected, t.impact_classification)
+
+    def test_lmi_without_a_level_derives_nothing_yet(self):
+        from app.data.models import MissileImpactTest
+        self.assertIsNone(
+            MissileImpactTest(impact_family="LMI").impact_classification)
+
+    def test_an_unclassified_test_derives_nothing(self):
+        """The 39 historical rows: no family, no classification, still legal."""
+        from app.data.models import MissileImpactTest
+        self.assertIsNone(
+            MissileImpactTest(missile="2x4 Lumber").impact_classification)
+
+    def test_a_level_without_a_family_derives_nothing(self):
+        """Belt and braces: the level alone never invents a family."""
+        from app.data.models import MissileImpactTest
+        self.assertIsNone(
+            MissileImpactTest(impact_level="D").impact_classification)
+
+
+class TheDatabaseRefusesSmiWithALevel(_Base):
+    """The one structural invariant, checked at the database and not only in
+    the route - so bypassing the API cannot produce the state either."""
+
+    def test_the_check_constraint_exists_and_is_named(self):
+        from app.data.models import MissileImpactTest
+        names = [c.name for c in MissileImpactTest.__table__.constraints
+                 if c.name]
+        self.assertIn("ck_missile_impact_tests_smi_has_no_level", names)
+
+    def test_smi_with_a_level_is_refused_by_the_database(self):
+        import sqlalchemy as sa
+        from app.data.models import MissileImpactTest
+        s = self.Session()
+        try:
+            s.add(MissileImpactTest(project_id=1, finished=False,
+                                    impact_family="SMI", impact_level="D"))
+            with self.assertRaises(sa.exc.IntegrityError):
+                s.commit()
+        finally:
+            s.rollback()
+            s.close()
+
+    def test_lmi_with_a_level_is_accepted(self):
+        from app.data.models import MissileImpactTest
+        s = self.Session()
+        try:
+            s.add(MissileImpactTest(project_id=1, finished=False,
+                                    impact_family="LMI", impact_level="D"))
+            s.commit()
+        finally:
+            s.close()
+
+    def test_a_historical_row_with_everything_null_is_still_valid(self):
+        """The 39 pre-existing tests are not backfilled and must stay legal."""
+        from app.data.models import MissileImpactTest
+        s = self.Session()
+        try:
+            s.add(MissileImpactTest(project_id=1, finished=False,
+                                    missile="2x4 Lumber"))
+            s.commit()
+        finally:
+            s.close()
+
+
 if __name__ == "__main__":
     unittest.main()

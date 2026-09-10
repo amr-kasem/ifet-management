@@ -2,7 +2,7 @@ import uuid
 
 from sqlalchemy import (
     Column, Integer, String, Float, ForeignKey, Boolean, DateTime, Text, JSON,
-    UniqueConstraint,
+    CheckConstraint, UniqueConstraint,
 )
 from sqlalchemy.orm import relationship, declarative_base
 
@@ -163,10 +163,65 @@ class MissileImpactTest(Base, AirtableProtocolRef):
 
     __tablename__ = "missile_impact_tests"
 
+    # **One structural invariant, and deliberately only one.** The family and
+    # level vocabularies stay in Pydantic so the business set can widen without
+    # a migration; what the database refuses is the pairing that can never be
+    # meaningful whatever the vocabulary becomes.
+    #
+    # Written NULL-explicitly rather than with IS DISTINCT FROM: the local
+    # suite runs on SQLite, and the leading IS NULL clause is not redundant -
+    # without it the 39 pre-existing rows pass only because SQL treats a NULL
+    # CHECK expression as satisfied, which is true but is not a statement of
+    # intent.
+    __table_args__ = (
+        CheckConstraint(
+            "impact_family IS NULL OR impact_family <> 'SMI' "
+            "OR impact_level IS NULL",
+            name="ck_missile_impact_tests_smi_has_no_level"),
+    )
+
     id = Column(Integer, primary_key=True, index=True)
     missile = Column(String, nullable=True)
     missile_weight = Column(Float, nullable=True)
     finished = Column(Boolean, nullable=False, default=False)
+
+    # --- the impact classification, 2026-09-10 ---------------------------
+    #
+    # `impact_family` is frozen ONCE, by `importer.bind`, from the bound
+    # section's IMPACT_SMI / IMPACT_LMI requirement code. Airtable owns the
+    # family; the operator never chooses it for a bound test, and there is no
+    # route that lets them. For a LabOS-only test there is no requirement code
+    # to own it, so the operator supplies it.
+    #
+    # The authority is `airtable_section_id` **on this row** - the test's own
+    # binding, not its project's. A project can be Airtable-bound while an
+    # individual test added to it is not.
+    #
+    # Nothing re-derives the family at publish time. `requirements.snapshot`
+    # exists because reading live parent rows is wrong for a finished test, and
+    # a classification recomputed from the mirror years later would have
+    # exactly that defect.
+    impact_family = Column(String, nullable=True)     # SMI | LMI
+    impact_level = Column(String, nullable=True)      # D | E - LMI only
+    # Operator-entered, ft/s. **Not derived from the classification**: no
+    # authoritative table for it exists in this repository or the contract.
+    # Distinct from `Shot.velocity`, which is the achieved value per impact.
+    target_velocity = Column(Float, nullable=True)
+
+    @property
+    def impact_classification(self):
+        """The outbound value. Derived output only - never an input.
+
+        There is no column for this and no API field that sets it: the only
+        way to change it is to change the family or the level, which is what
+        makes a classification contradicting the Airtable requirement
+        unrepresentable rather than merely refused.
+        """
+        if self.impact_family == "SMI":
+            return "SMI"
+        if self.impact_family == "LMI" and self.impact_level:
+            return f"LMI Level {self.impact_level}"
+        return None
 
     project_id = Column(Integer, ForeignKey('projects.id'))
     project = relationship("Project", back_populates="missile_impact_tests")

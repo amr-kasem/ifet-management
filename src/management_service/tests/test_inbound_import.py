@@ -494,6 +494,59 @@ class TheRequirementIsFrozenAtStart(_Base):
             s.close()
 
 
+class TheImpactFamilyIsFrozenFromTheRequirementCode(_Base):
+    """Airtable owns SMI vs LMI, and the operator is never asked.
+
+    `bind` sets it once from IMPACT_SMI / IMPACT_LMI. The import route returns
+    early on an existing project, so `bind` does not re-run on a refresh —
+    which is what makes the value frozen structurally rather than by a rule
+    something has to remember to enforce.
+    """
+
+    def _import(self):
+        r = self.do_import()
+        self.assertEqual(200, r.status_code, r.text)
+        return r.json()
+
+    def test_an_lmi_section_freezes_the_family_as_lmi(self):
+        self.mirror_sections(section("recSEC_STATIC", "STATIC_PRESSURE"),
+                             section("recSEC_IMPACT", "IMPACT_LMI"))
+        tests = self._import()["missile_impact_tests"]
+        self.assertEqual(["LMI"], [t["impact_family"] for t in tests])
+
+    def test_an_smi_section_freezes_the_family_as_smi(self):
+        self.mirror_sections(section("recSEC_STATIC", "STATIC_PRESSURE"),
+                             section("recSEC_IMPACT", "IMPACT_SMI"))
+        tests = self._import()["missile_impact_tests"]
+        self.assertEqual(["SMI"], [t["impact_family"] for t in tests])
+
+    def test_two_impact_sections_get_their_own_families(self):
+        """LMI and SMI are two tests, each carrying its own section's code."""
+        self.mirror_sections(section("recSEC_STATIC", "STATIC_PRESSURE"),
+                             section("recSEC_LMI", "IMPACT_LMI"),
+                             section("recSEC_SMI", "IMPACT_SMI"))
+        tests = self._import()["missile_impact_tests"]
+        self.assertEqual({"LMI", "SMI"}, {t["impact_family"] for t in tests})
+
+    def test_the_level_and_velocity_are_not_prefilled_from_airtable(self):
+        """Only the family comes from Airtable. The level is the operator's
+        choice and the target velocity is operator-entered — neither is
+        derived, and nothing in Airtable supplies them."""
+        self.mirror_sections(section("recSEC_STATIC", "STATIC_PRESSURE"),
+                             section("recSEC_IMPACT", "IMPACT_LMI"))
+        test = self._import()["missile_impact_tests"][0]
+        self.assertIsNone(test["impact_level"])
+        self.assertIsNone(test["target_velocity"])
+        self.assertIsNone(test["impact_classification"])
+
+    def test_a_bound_test_carries_the_section_id_that_owns_its_family(self):
+        """The authority is resource-level: this column on this row."""
+        self.mirror_sections(section("recSEC_STATIC", "STATIC_PRESSURE"),
+                             section("recSEC_IMPACT", "IMPACT_LMI"))
+        test = self._import()["missile_impact_tests"][0]
+        self.assertEqual("recSEC_IMPACT", test["airtable_section_id"])
+
+
 class AnUnsupportedStaticProgrammeSuppressesStaticLoad(_Base):
     """`STATIC_PROGRAMME` was read, validated and then discarded.
 

@@ -48,6 +48,10 @@ LOCAL_TYPE_BY_CODE = {
 # enforced it, and an unsupported value was discarded silently.
 SUPPORTED_STATIC_PROGRAMMES = frozenset({"Full"})
 
+# Airtable owns the impact family through the requirement code. The operator
+# is never asked SMI vs LMI for a bound test, so the two cannot disagree.
+IMPACT_FAMILY_BY_CODE = {"IMPACT_SMI": "SMI", "IMPACT_LMI": "LMI"}
+
 
 class ImportError_(Exception):
     """The hierarchy cannot be imported as given."""
@@ -310,9 +314,23 @@ def bind(session, project, import_plan):
                 for k, v in common.items():
                     setattr(test, k, v)
         elif local_type == "impact":
+            # **The family is frozen here, once, and never again.** The import
+            # route returns early on an existing project (`existing_project`),
+            # so `bind` does not re-run on a refresh: this assignment happens
+            # exactly at first import and nothing else in the system writes
+            # the column. That is what makes the operator unable to contradict
+            # Airtable - not a rule the API defends, but a value they are
+            # never offered.
+            #
+            # Frozen deliberately. If the section's code later changes from
+            # IMPACT_LMI to IMPACT_SMI upstream, this test keeps what it was
+            # imported as, for the same reason `requirements.snapshot` freezes
+            # the rest of the requirement: a finished test must go on claiming
+            # what it actually ran against.
             test = MissileImpactTest(project_id=project.id,
                                      missile=section.missile,
                                      missile_weight=section.missile_weight,
+                                     impact_family=IMPACT_FAMILY_BY_CODE[code],
                                      **common)
             session.add(test)
             created.append(("impact", test))

@@ -1,7 +1,7 @@
 import datetime as _dt
 from typing import List, Literal, Optional
 from xmlrpc.client import Boolean
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class DeflectionCreateSchema(BaseModel):
@@ -123,6 +123,20 @@ class MissileImpactTestCreateSchema(BaseModel):
 class MissileImpactTestSchema(MissileImpactTestCreateSchema):
     id: int
     shots: List[ShotSchema]
+
+    # **The project payload is what the UI actually loads**, so the impact
+    # classification has to be visible here and not only on the per-test
+    # route - a screen that reads the project once must see it.
+    #
+    # `impact_classification` is read-only and computed on the model. It is
+    # returned rather than left to the client so the derivation rule lives in
+    # one place; a UI recomputing "SMI or LMI Level D/E" would be a second
+    # implementation to drift from.
+    airtable_section_id: Optional[str] = None
+    impact_family: Optional[str] = None
+    impact_level: Optional[str] = None
+    target_velocity: Optional[float] = None
+    impact_classification: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -488,6 +502,28 @@ class ManualTestSchema(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# **The business vocabulary lives here, deliberately.** The database carries
+# one CHECK - SMI implies no level - and nothing else about these sets, so
+# adding a classification later is an edit to these two tuples plus the
+# Airtable option set, and not a migration.
+IMPACT_FAMILIES = ("SMI", "LMI")
+IMPACT_LEVELS = ("D", "E")
+
+
+def _validate_family(value):
+    if value is not None and value not in IMPACT_FAMILIES:
+        raise ValueError(f"impact_family must be one of {list(IMPACT_FAMILIES)}; "
+                         f"got {value!r}")
+    return value
+
+
+def _validate_level(value):
+    if value is not None and value not in IMPACT_LEVELS:
+        raise ValueError(f"impact_level must be one of {list(IMPACT_LEVELS)}; "
+                         f"got {value!r}")
+    return value
 
 
 class ImpactTestCreateSchema(BaseModel):
