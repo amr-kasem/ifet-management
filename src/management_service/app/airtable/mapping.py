@@ -385,6 +385,17 @@ def envelope_values(attempt, *, strict=True):
         # second run overwrites it, so the evidence must be captured at
         # termination. See `attempts.capture_cycles_completed`.
         "Cycles Completed": attempt.cycles_completed,
+        # **The same value as Test Result, projected by type.** Not a second
+        # lifecycle: `test_result` is `Pending` from creation until the first
+        # review, so the applicable field carries Pending at terminal and the
+        # verdict afterwards, exactly as Test Result does.
+        #
+        # `None` for every other type, which §5 turns into an omitted key -
+        # the non-applicable field is never sent blank.
+        "Forced Entry Result": (attempt.test_result
+                                if attempt.test_type == C.FORCED_ENTRY else None),
+        "ANSI Result": (attempt.test_result
+                        if attempt.test_type == C.ANSI_Z97 else None),
         "Result Detail (JSON)": attempt.result_detail or result_detail(attempt),
 
         # -- §4.5 timing, people, disposition ---------------------------------

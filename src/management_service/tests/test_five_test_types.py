@@ -78,8 +78,11 @@ TERMINAL_EXTRA = {
                "Impact Classification": "LMI Level D",
                "Target Impact Velocity": 50.0,
                "LabOS Photos": [{"url": "https://labos.example/p.jpg"}]},
-    C.FORCED_ENTRY: {},
-    C.ANSI_Z97: {},
+    # Since 2026-09-11 each manual type also carries its own standard's
+    # result. Pending at terminal, exactly like Test Result, because it is the
+    # same value projected by type rather than a second lifecycle.
+    C.FORCED_ENTRY: {"Forced Entry Result": C.RESULT_PENDING},
+    C.ANSI_Z97: {"ANSI Result": C.RESULT_PENDING},
 }
 
 
@@ -107,6 +110,11 @@ def reviewed(test_type, **over):
         "LabOS Verdict At": T1,
         "Retest Required": False,
     })
+    # The dedicated field moves with the verdict, because it is the same value.
+    if test_type == C.FORCED_ENTRY:
+        v["Forced Entry Result"] = "Pass"
+    if test_type == C.ANSI_Z97:
+        v["ANSI Result"] = "Pass"
     v.update(over)
     return v
 
@@ -300,14 +308,12 @@ class JsonOnlyFieldsSurvive(unittest.TestCase):
                        if not f.expected_live and not f.pending_schema)
         self.assertEqual(absent, self.JSON_ONLY)
 
-    def test_nothing_is_pending_schema_now(self):
-        """`pending_schema` marks a field decided but not yet created. Both
-        TA7b fields were created on 2026-09-11, so the set is empty again -
-        which is the assertion, not the absence of one. The flag stays for the
-        next application; an empty tuple says no field is currently owed,
-        which is a different claim from the mechanism having been deleted."""
-        self.assertEqual((), tuple(f.labos_name for f in C.FIELDS
-                                   if f.pending_schema))
+    def test_the_pending_schema_set_is_what_is_currently_owed(self):
+        """`pending_schema` marks a field decided but not yet created. TA7b's
+        two were created on 2026-09-11 and left the set; TA6's two entered it
+        the same day and leave when they are applied."""
+        self.assertEqual(("Forced Entry Result", "ANSI Result"),
+                         tuple(f.labos_name for f in C.FIELDS if f.pending_schema))
 
     def test_cycles_completed_reaches_the_json_not_a_column(self):
         w = build_terminal(terminal(C.CYCLES), live_options=live_options())

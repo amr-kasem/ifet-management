@@ -210,6 +210,31 @@ FIELDS = [
     Field("Target Impact Velocity", CONDITIONAL, PRESENT, "number",
           note="APPLIED 2026-09-11 fldhywP9YpsmoWWT1 — "
                "missile_impact_tests.target_velocity, ft/s; Impact only"),
+    # -- the per-standard result projection, 2026-09-11 --------------------
+    #
+    # **The same value as `Test Result`, gated by test type.** The product
+    # owner asked for Forced Entry and ANSI to be distinguishable because they
+    # are judged under different standards; he did not ask for a second result
+    # lifecycle, so there is not one. `test_results.test_result` projects into
+    # whichever of these two applies, and into neither for the other three
+    # types.
+    #
+    # Option set and `option_wire` are copied from `Test Result` rather than
+    # restated: the base holds `Passed`/`Failed`, confirmed by the schema probe
+    # on 2026-08-23, and a second spelling of the same vocabulary is exactly
+    # the drift this field exists to avoid.
+    #
+    # `terminal+verdict` like `Test Result`, so at terminal the applicable
+    # field carries `Pending` and the first review replaces it. That is why
+    # `Pending` is in the option set.
+    Field("Forced Entry Result", CONDITIONAL, ABSENT, "single select",
+          options=["Pending", "Pass", "Fail", "Inconclusive"],
+          option_wire={"Pass": "Passed", "Fail": "Failed"}, pending_schema=True,
+          note="test_results.test_result, gated to Test Type = Forced Entry"),
+    Field("ANSI Result", CONDITIONAL, ABSENT, "single select",
+          options=["Pending", "Pass", "Fail", "Inconclusive"],
+          option_wire={"Pass": "Passed", "Fail": "Failed"}, pending_schema=True,
+          note="test_results.test_result, gated to Test Type = ANSI Z97.1"),
     Field("Result Detail (JSON)", CONDITIONAL, RENAMED, "long text",
           wire_name="Complete LabOS JSON Response",
           note="granted in v2 — the extensibility valve, §6"),
@@ -382,8 +407,11 @@ REQUIRED_BY_TEST_TYPE = {
     # allowed to finish.
     IMPACT: ("Impact Result", "Test Result", "Result Detail (JSON)",
              "Impact Classification", "Target Impact Velocity"),
-    FORCED_ENTRY: ("Test Result", "Result Detail (JSON)"),
-    ANSI_Z97: ("Test Result", "Result Detail (JSON)"),
+    # Each manual type also carries its own standard's result. Enforced on
+    # COMPLETED only, so an aborted attempt - which records no result - is
+    # never stranded by it.
+    FORCED_ENTRY: ("Test Result", "Result Detail (JSON)", "Forced Entry Result"),
+    ANSI_Z97: ("Test Result", "Result Detail (JSON)", "ANSI Result"),
 }
 
 # Evidence a run cannot be *finished* without. Deliberately NOT part of the

@@ -8,6 +8,7 @@ engine by `tests/rehearse_p1_migration.py`.
 """
 
 import datetime as dt
+import json
 import unittest
 
 UTC = dt.timezone.utc
@@ -82,6 +83,92 @@ def reviewed(**over):
              verdict_at=dt.datetime(2026, 8, 23, 15, 0, tzinfo=UTC))
     d.update(over)
     return attempt(**d)
+
+
+class ThePerStandardResultIsGatedByTestType(unittest.TestCase):
+    """`Forced Entry Result` and `ANSI Result` project the same value as
+    `Test Result`, and only onto the type each belongs to.
+
+    The product owner asked for the two standards to be distinguishable, not
+    for a second result lifecycle — so this is one value gated by type. The
+    assertions that matter are the negative ones: a Forced Entry attempt must
+    not be able to populate `ANSI Result`, and neither field may be *sent
+    blank* on a type it does not apply to. Omitted and blank read differently
+    to a person and to an automation.
+    """
+
+    FE, ANSI = "Forced Entry", "ANSI Z97.1"
+
+    def manual(self, test_type, **over):
+        return attempt(static_test=None, test_type=test_type,
+                       manual_test=static_test(), result_detail={"manual": {}},
+                       deflections=[], measured_value=None, unit=None,
+                       max_pressure_achieved=None, **over)
+
+    def test_forced_entry_populates_only_its_own_field(self):
+        v = envelope_values(self.manual(self.FE, test_result="Pending"))
+        self.assertEqual("Pending", v["Forced Entry Result"])
+        self.assertNotIn("ANSI Result", v)
+
+    def test_ansi_populates_only_its_own_field(self):
+        v = envelope_values(self.manual(self.ANSI, test_result="Pending"))
+        self.assertEqual("Pending", v["ANSI Result"])
+        self.assertNotIn("Forced Entry Result", v)
+
+    def test_forced_entry_cannot_populate_the_ansi_field(self):
+        """The negative direction, stated on its own because it is the whole
+        point of having two fields."""
+        for verdict in ("Pending", "Pass", "Fail", "Inconclusive"):
+            with self.subTest(verdict=verdict):
+                v = envelope_values(self.manual(self.FE, test_result=verdict))
+                self.assertNotIn("ANSI Result", v)
+
+    def test_ansi_cannot_populate_the_forced_entry_field(self):
+        for verdict in ("Pending", "Pass", "Fail", "Inconclusive"):
+            with self.subTest(verdict=verdict):
+                v = envelope_values(self.manual(self.ANSI, test_result=verdict))
+                self.assertNotIn("Forced Entry Result", v)
+
+    def test_the_dedicated_field_tracks_test_result_exactly(self):
+        """Not a second lifecycle: Pending at terminal, the verdict after."""
+        for verdict in ("Pending", "Pass", "Fail", "Inconclusive"):
+            with self.subTest(verdict=verdict):
+                v = envelope_values(self.manual(self.FE, test_result=verdict))
+                self.assertEqual(v["Test Result"], v["Forced Entry Result"])
+
+    def test_the_other_three_types_emit_neither(self):
+        for test_type in ("Static Load", "Cycles", "Impact"):
+            with self.subTest(test_type=test_type):
+                v = envelope_values(attempt(test_type=test_type), strict=False)
+                self.assertNotIn("Forced Entry Result", v)
+                self.assertNotIn("ANSI Result", v)
+
+    def test_the_non_applicable_field_appears_nowhere_in_the_payload(self):
+        """End of the chain, and stated so it holds before and after the
+        schema write.
+
+        Until the two columns exist in the base these fields are `ABSENT`, so
+        the envelope carries them through the JSON valve as `labos_extra`
+        rather than as columns — which is right, and means nothing is lost
+        while the schema catches up. Once the fields are created and flip to
+        `PRESENT` they become columns. Either way the invariant is the same:
+        the applicable value is carried, and the other one is **nowhere at
+        all** — not a column, not a JSON key, not an empty cell.
+        """
+        from app.airtable import envelope
+        payload = envelope.build_terminal(
+            envelope_values(self.manual(self.ANSI, test_result="Pending")))
+        fields = payload.get("fields", payload)
+        blob = json.dumps(fields)
+        self.assertIn("ansi_result", blob.lower().replace(" ", "_"))
+        self.assertNotIn("forced_entry_result", blob.lower().replace(" ", "_"))
+        self.assertNotIn("Forced Entry Result", fields)
+
+    def test_test_result_is_unchanged_and_still_sent_for_both(self):
+        for test_type in (self.FE, self.ANSI):
+            with self.subTest(test_type=test_type):
+                v = envelope_values(self.manual(test_type, test_result="Pass"))
+                self.assertEqual("Pass", v["Test Result"])
 
 
 class Linkage(unittest.TestCase):

@@ -227,6 +227,42 @@ FIELDS = [
             "type. Replaces the Missile Type, Missile Weight and Impact Velocity "
             "request of 2026-09-08, which LabOS no longer reads."),
     }),
+    # --- the per-standard result fields, 2026-09-11 -------------------------
+    #
+    # Requested and then withdrawn on 2026-09-06 under A9 - "no dedicated
+    # scalar; add one only when a named operational report requires it". The
+    # product owner reopened it on 2026-09-10: Forced Entry and ANSI are judged
+    # under different standards and their results must be distinguishable.
+    #
+    # The shared `Test Result` is unchanged and still carries every attempt's
+    # verdict; these are additional, and each is blank on the four types it
+    # does not apply to. Same four options and the same Passed/Failed spelling
+    # the base already uses, because this is the same value projected by type,
+    # not a second vocabulary.
+    (RAW_RESULTS, {
+        "name": "Forced Entry Result",
+        "type": "singleSelect",
+        "options": {"choices": [{"name": "Pending"}, {"name": "Passed"},
+                                {"name": "Failed"}, {"name": "Inconclusive"}]},
+        "description": (
+            "The Forced Entry verdict, for filtering and reporting on that standard "
+            "alone. Populated only for Test Type = Forced Entry and blank on every "
+            "other type. Pending until the first review, then the verdict - the same "
+            "value as Test Result, which is unchanged and still carries it for all "
+            "five test types."),
+    }),
+    (RAW_RESULTS, {
+        "name": "ANSI Result",
+        "type": "singleSelect",
+        "options": {"choices": [{"name": "Pending"}, {"name": "Passed"},
+                                {"name": "Failed"}, {"name": "Inconclusive"}]},
+        "description": (
+            "The ANSI Z97.1 verdict, for filtering and reporting on that standard "
+            "alone. Populated only for Test Type = ANSI Z97.1 and blank on every "
+            "other type. Pending until the first review, then the verdict - the same "
+            "value as Test Result, which is unchanged and still carries it for all "
+            "five test types."),
+    }),
     (RAW_RESULTS, {
         "name": "Target Impact Velocity",
         "type": "number",

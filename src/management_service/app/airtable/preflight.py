@@ -87,13 +87,24 @@ DEPRECATED_TESTING_ONLY = {
 # script says so out loud rather than silently not checking them. The day they
 # are created they move into ADDED — that move is the schema write's
 # acceptance criterion, not a tidy-up afterwards.
-PENDING_SCHEMA = {}
+PENDING_SCHEMA = {
+    # TA6. Decided by the product owner 2026-09-10, not yet created.
+    RAW: [
+        ("Forced Entry Result", "singleSelect"),
+        ("ANSI Result", "singleSelect"),
+    ],
+}
 
 # Type alone is not the contract for these. A singleSelect with the wrong
 # choices accepts nothing LabOS sends; a number with precision 0 silently
 # truncates 50.25 ft/s. Asserted whenever the field is present.
 EXPECTED_CHOICES = {
     "Impact Classification": ["SMI", "LMI Level D", "LMI Level E"],
+    # The wire spelling, not the LabOS one: the base holds Passed/Failed, and
+    # contract.Field.option_wire is what translates. A select created with
+    # Pass/Fail would reject every verdict LabOS sends.
+    "Forced Entry Result": ["Pending", "Passed", "Failed", "Inconclusive"],
+    "ANSI Result": ["Pending", "Passed", "Failed", "Inconclusive"],
 }
 EXPECTED_PRECISION = {
     "Target Impact Velocity": 2,
