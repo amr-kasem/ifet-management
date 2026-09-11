@@ -371,7 +371,7 @@ physical machine; Airtable has no opinion on it.
 
 | Route | |
 |---|---|
-| `GET /sync/status` | `status` is one of **`Synced` · `Pending` · `Sync Failed` · `Retry Required`** — the Airtable team's own four words. Also `attachment_backlog`, `attachment_parked`, `artifacts_needing_reconciliation`, `failed_publications`, `worker_alive` |
+| `GET /sync/status` | `status` is one of **`Synced` · `Pending` · `Sync Failed` · `Retry Required`** — the Airtable team's own four words. Also `led`, `attachment_backlog`, `attachment_parked`, `artifacts_needing_reconciliation`, `failed_publications`, `queue_depth`, `parked`, `blocked_attempts`, `revision`, `last_push_ok_at` / `last_pull_ok_at` / `last_push_error` / `last_pull_error`, and — for liveness — **`worker_alive` plus `heartbeat_age_seconds`**. ⚠️ There is no `worker_heartbeat_at`; this document named one until 2026-09-11. ⚠️ **A dead worker reads as `Sync Failed` with an empty queue**, which is correct and is not a failed result: check `worker_alive` before showing the headline as a data problem |
 | `GET /sync/queue` | one row per pending write, with `channel` (`record` or `attachment`) |
 | `POST /sync/queue/{id}/retry` | un-park one entry. Re-enables eligibility; sends nothing |
 | `GET /sync/failures` | payloads LabOS **refused to queue**. Invisible in `/sync/queue` by construction — they never got an entry |
