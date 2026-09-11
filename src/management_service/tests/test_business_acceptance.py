@@ -99,6 +99,7 @@ class _Base(unittest.TestCase):
 
     def setUp(self):
         self.client, self.Session = _client_and_session()
+        from app.airtable.mirror import AtMirrorSection
         from app.data.models import Device, Project, ProjectParent
         s = self.Session()
         s.add(Device(id=1, name="system-1", turbo_mode=False, turbo_slave=False))
@@ -111,6 +112,18 @@ class _Base(unittest.TestCase):
         # Standalone: an operator typed it. No rec… ids anywhere.
         s.add(Project(id=2, name="Specimen B", parent_id=1, device_id=1,
                       inward_design_pressure=60.0, outward_design_pressure=45.0))
+        # **DG14.** Project 1 is Airtable-bound, so its design-pressure pair is
+        # something LabOS mirrored rather than something an operator typed, and
+        # a rig stage cannot run against it until a named person has read the
+        # same pair off the proposal. The mirrored section has to exist for
+        # there to be anything to agree with — `link_test` points the rig tests
+        # at it. Project 2 needs none of this and deliberately has none of it.
+        s.add(AtMirrorSection(
+            record_id=REC["section"], protocol_record_id=REC["protocol"],
+            section_name="DP (+) (PSF)", requirement_code="STATIC_PRESSURE",
+            requirement_kind="Directional Pair", applicability="Required",
+            required_value_inward=60.0, required_value_outward=45.0,
+            required_unit="PSF"))
         s.commit()
         s.close()
 
@@ -139,7 +152,15 @@ class _Base(unittest.TestCase):
         return out
 
     def link_test(self, table, test_id):
-        """Give a created test its Airtable protocol/section ids."""
+        """Give a created test its Airtable protocol/section ids.
+
+        **Rig tests are also released, here** — DG14. A static or cyclic test
+        bound to an Airtable section cannot start until the imported
+        design-pressure pair has been independently verified against the
+        proposal, so binding one without releasing it produces a test that
+        correctly refuses to run. `tests/test_requirement_release.py` is where
+        that refusal is the subject; here it is setup.
+        """
         s = self.Session()
         try:
             s.execute(sa.text(
@@ -151,6 +172,18 @@ class _Base(unittest.TestCase):
             s.commit()
         finally:
             s.close()
+        if table in ("static_tests", "cyclic_tests"):
+            self.release_requirement()
+
+    def release_requirement(self, project_id=1):
+        """Record the §3.3 verification for the Airtable-bound project."""
+        r = self.client.post(
+            f"/projects/{project_id}/requirement-verification",
+            json={"inward_psf": 60.0, "outward_psf": 45.0, "unit": "PSF",
+                  "reference": "Proposal P-2291 rev C",
+                  "verified_by": "technician-1"})
+        assert r.status_code in (200, 409), r.text
+        return r
 
     def assert_no_withheld(self, payload):
         for field in WITHHELD:
@@ -367,6 +400,7 @@ class RigTypeRoundTrip(_Base):
             s.commit()
         finally:
             s.close()
+        self.release_requirement()          # DG14 — see `_Base.link_test`
 
     def test_static_trial_queues_a_create_without_the_withheld_fields(self):
         self._static_test()
@@ -572,6 +606,7 @@ class CyclicRoundTrip(_Base):
             s.commit()
         finally:
             s.close()
+        self.release_requirement()          # DG14 — see `_Base.link_test`
         r = self.client.post("/projects/1/cyclic-tests/0/trials", json={
             "result": True, "deflections": [
                 {"deflection_gauge": "g1", "max_deflection": 980.0,
@@ -1320,6 +1355,11 @@ class RigTypesCompleteTheirLifecycle(_Base):
             s.commit()
         finally:
             s.close()
+        # **DG14.** These rows are inserted straight into the table rather than
+        # through `link_test`, so the release has to be recorded here too: an
+        # Airtable-bound rig test does not start until the design-pressure pair
+        # has been verified against the proposal.
+        self.release_requirement()
         return "static_tests" if kind == "static" else "cyclic-tests"
 
     def _attempt_id(self):

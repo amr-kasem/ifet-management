@@ -409,6 +409,51 @@ class AttemptCorrectSchema(BaseModel):
         from_attributes = True
 
 
+class RequirementVerificationSchema(BaseModel):
+    """The design-pressure pair as read off the trusted proposal — §3.3, DG14.
+
+    Every field is required and none is defaulted. A reference that defaults to
+    an empty string, or a verifier that defaults to "operator", would satisfy
+    the letter of §3.3 while recording that nobody in particular read nothing
+    in particular — and §3.3 says an operator provenance tag alone is
+    insufficient precisely to head that off.
+
+    `unit` is here rather than assumed so that sending the pair in the wrong
+    unit is a refusal rather than a silent reinterpretation. It is checked
+    against PSF, not converted.
+    """
+
+    inward_psf: float
+    outward_psf: float
+    unit: str
+    # Which proposal, at which revision — "Proposal P-2291 rev C", not "the
+    # proposal". This is the thing a reviewer six months later has to be able
+    # to go and re-read.
+    reference: str
+    verified_by: str
+
+    class Config:
+        from_attributes = True
+
+
+class RequirementReleaseSchema(BaseModel):
+    """Why a test may or may not run, for the operator's screen.
+
+    Served from the same `release.evaluate` the start path enforces, so what
+    the operator is told and what the backend does cannot drift apart.
+    """
+
+    executable: bool
+    code: str
+    reason: str = ""
+    airtable_section_id: Optional[str] = None
+    imported_pair_psf: Optional[List[float]] = None
+    verified_pair_psf: Optional[List[float]] = None
+
+    class Config:
+        from_attributes = True
+
+
 class VerdictSchema(BaseModel):
     """The first review. Recorded once, by someone with a name.
 

@@ -100,6 +100,32 @@ class Project(Base):
     # retyped. **Never executed from** — nothing here reaches a rig.
     airtable_meta = Column(JSON, nullable=True)
 
+    # --- DG14 / contract §3.3: source verification -------------------------
+    #
+    # **The design-pressure pair, as read off the trusted proposal by a named
+    # person**, alongside the pair LabOS mirrored from Airtable. Their
+    # agreement is what releases an imported Static Load or Cycles test for
+    # execution; see `app/airtable/release.py` for why agreement rather than
+    # inspection is the only control that works here.
+    #
+    # All six are nullable and all six are required together. A job with no
+    # Airtable origin leaves them NULL for the life of the project and is
+    # executable regardless — nothing about a locally-entered pair needs
+    # reconciling with a second source, because there is no second source.
+    #
+    # Nothing is ever backfilled onto historical rows: a verification is a
+    # statement that a person read a document, and there is no evidence for
+    # such a statement about the past.
+    requirement_verified_inward = Column(Float, nullable=True)
+    requirement_verified_outward = Column(Float, nullable=True)
+    requirement_verified_unit = Column(String, nullable=True)
+    # Which proposal, at which revision. §3.3: "An `operator` provenance tag
+    # alone is insufficient" — the document is the point, not the fact that
+    # somebody clicked.
+    requirement_reference = Column(String, nullable=True)
+    requirement_verified_by = Column(String, nullable=True)
+    requirement_verified_at = Column(DateTime(timezone=True), nullable=True)
+
     device = relationship("Device", back_populates="projects")
     parent = relationship("ProjectParent", back_populates="projects", foreign_keys=[parent_id])
     static_tests = relationship("StaticTest", back_populates="project", cascade="all, delete-orphan")

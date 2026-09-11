@@ -387,6 +387,28 @@ def main(argv=None):                                            # noqa: PLR0915
     # ---- the other three types emit neither field ------------------------
     other_types = {}
 
+    # **DG14, on the real path.** The design-pressure pair came from Airtable,
+    # so no static or cyclic stage may run until a named person has read the
+    # same pair off the proposal and the two agree. Asserted before and after,
+    # because a gate that is only observed working is not observed refusing.
+    blocked = client.put(f"/projects/{pid}/static_tests/0/start",
+                         json={"operator_name": OPERATOR})
+    report.record("[DG14] an unverified imported requirement cannot start a rig",
+                  blocked.status_code == 409, f"{blocked.status_code} {blocked.text[:120]}")
+
+    wrong = client.post(f"/projects/{pid}/requirement-verification", json={
+        "inward_psf": 9.0, "outward_psf": 9.0, "unit": "PSF",
+        "reference": "Proposal (probe)", "verified_by": OPERATOR})
+    report.record("[DG14] a pair that disagrees with Airtable is refused",
+                  wrong.status_code == 409, f"{wrong.status_code} {wrong.text[:160]}")
+
+    ver = client.post(f"/projects/{pid}/requirement-verification", json={
+        "inward_psf": 60.0, "outward_psf": 45.0, "unit": "PSF",
+        "reference": "Proposal (probe) rev A", "verified_by": OPERATOR})
+    report.record("[DG14] the agreeing pair releases the job",
+                  ver.status_code == 200 and ver.json().get("executable") is True,
+                  f"{ver.status_code} {ver.text[:160]}")
+
     st = client.post(f"/projects/{pid}/static_tests/0/trials", json={
         "operator_name": OPERATOR, "result": True, "testing_continued": "Stopped",
         "deflections": [{"deflection_gauge": "g1", "max_deflection": 1234.0,
@@ -408,6 +430,21 @@ def main(argv=None):                                            # noqa: PLR0915
         "deflections": [{"deflection_gauge": "g1", "max_deflection": 1000.0,
                          "permanent_deflection": 8.0, "recovery": 60.0}]})
     report.record("[Cycles] trial accepted", cy.status_code in (200, 201), cy.text[:120])
+
+    # The verification travels with the evidence, not looked up at publish
+    # time — §3.3 freezes it onto the attempt at start.
+    s = Session()
+    try:
+        from app.data.models import StaticTestResult
+        snap = (s.query(StaticTestResult).order_by(StaticTestResult.id.desc())
+                .first().requirement_snapshot) or {}
+    finally:
+        s.close()
+    facts = snap.get("source_verification") or {}
+    report.record("[DG14] the verification is frozen onto the rig attempt",
+                  facts.get("verified_by") == OPERATOR
+                  and facts.get("verified_inward_psf") == 60.0,
+                  str(facts)[:160])
 
     imp_test = project["missile_impact_tests"][0]["id"]
     client.patch(f"/projects/{pid}/impact-tests/{imp_test}",

@@ -10,7 +10,7 @@ from app.data.schema import *  # RunStartSchema included
 from app.data import attempts
 # The transactional-outbox seam. Persistence and payload only — it cannot
 # open a socket, which `tests/test_report_api_isolation.py` enforces.
-from app.airtable import importer, mirror, requirements
+from app.airtable import importer, mirror, release, requirements
 from app.sync import publish
 # Local status reads only — `state` and `outbox` are persistence, not transport.
 from app.sync import outbox as outbox_mod
@@ -397,8 +397,13 @@ def create_static_test_trial(project_id: int, static_test_index: int, trial_data
     static_test : StaticTest = db.query(StaticTest).filter(StaticTest.index == static_test_index, StaticTest.project_id == project_id).first()
     if not static_test:
         raise HTTPException(status_code=404, detail="Static test not found")
-    
-    
+
+    # **Here as well as on `start`, and that is not belt and braces.** The rig
+    # posts a finished stage directly to this route; nothing obliges it to have
+    # called `start` first, so a gate only on `start` would be a gate a rig
+    # walks past. DG14.
+    _require_released(db, db_project, static_test)
+
     _test_id = attempts.test_id_for_test(attempts.STATIC, static_test.id)
 
     def _build_trial():
@@ -603,7 +608,13 @@ def create_cyclic_test_trial(project_id: int, cyclic_test_index: int, trial_data
     cyclic_test : CyclicTest = db.query(CyclicTest).filter(CyclicTest.index == cyclic_test_index, CyclicTest.project_id == project_id).first()
     if not cyclic_test:
         raise HTTPException(status_code=404, detail="CyclicTest not found")
-    
+
+    # As on the static trial route: the rig posts a finished stage here
+    # without necessarily having called `start`, so the gate has to be on the
+    # path that actually records evidence. DG14.
+    _require_released(db, db.query(Project).filter(Project.id == project_id).first(),
+                      cyclic_test)
+
     cyclic_test.resume = False
     
     db.commit()
@@ -691,6 +702,133 @@ def get_next_cyclic_test(project_id: int, db: Session = Depends(get_db)):
     return HTTPException(status_code=404, detail="No Test Available")
 
 
+def _require_released(db, project, test):
+    """Refuse to start or record a rig stage whose requirement is not released.
+
+    **DG14 / contract §3.3, and §3.3 says to check it here.** An Airtable-bound
+    static or cyclic test derives all fourteen of its stages from the imported
+    design-pressure pair, and the upstream extractor is known to shift values
+    one column to the left — 60 PSF arrives as 9, plausibly. The pair must
+    therefore have been read independently off the trusted proposal by a named
+    person and agree with what LabOS mirrored, before any of it can move
+    hardware.
+
+    A `409`, not a `400`: nothing about the request is malformed. The job is
+    simply not in a state where it may run, and it becomes so when somebody
+    verifies it — which is what the message says.
+
+    A LabOS-only test passes straight through. Its pressures are the operator's
+    own input and there is no second source to reconcile.
+    """
+    state = release.evaluate(db, project, test)
+    if not state.executable:
+        raise HTTPException(status_code=409, detail=state.reason)
+    return state
+
+
+@app.get("/projects/{project_id}/requirement-release",
+         response_model=RequirementReleaseSchema)
+def get_requirement_release(project_id: int, static_test_index: int = 0,
+                            kind: str = "static",
+                            db: Session = Depends(get_db)):
+    """May this job's rig tests run, and if not, what has to happen first?
+
+    Served from the **same** `release.evaluate` the start path enforces, so a
+    screen cannot show a green light the backend will refuse. `code` is a
+    stable token to branch on; `reason` is the sentence to show the operator.
+    """
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    model = CyclicTest if kind == "cyclic" else StaticTest
+    test = db.query(model).filter(model.index == static_test_index,
+                                  model.project_id == project_id).first()
+    if not test:
+        raise HTTPException(status_code=404, detail=f"{kind} test not found")
+    return release.evaluate(db, project, test).as_dict()
+
+
+@app.post("/projects/{project_id}/requirement-verification",
+          response_model=RequirementReleaseSchema)
+def verify_requirement(project_id: int, body: RequirementVerificationSchema,
+                       db: Session = Depends(get_db)):
+    """Record the design-pressure pair as read off the trusted proposal.
+
+    **The control DG14 needs, and the only one that can work.** A shifted value
+    is individually plausible, so nothing can detect it by looking at it. What
+    catches it is a second independent reading of the same fact: this route
+    takes the operator's, compares it with what LabOS mirrored from Airtable,
+    and **refuses the two to disagree**.
+
+    A disagreement is a `409` and **nothing is stored**. LabOS does not pick a
+    winner between two contradicting sources — publishing a result against a
+    requirement we chose for ourselves is the failure mode, not the fix — and
+    storing a pair nobody believes would leave the job permanently stuck with a
+    wrong number in it.
+
+    Immutable once a rig attempt exists. Before that it may be re-recorded: a
+    typo caught immediately should not need a new job. §3.3: changes after
+    start require a new run, not a mutated active snapshot.
+    """
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    section_ids = {t.airtable_section_id for t in
+                   list(project.static_tests) + list(project.cyclic_tests)
+                   if getattr(t, "airtable_section_id", None)}
+    if not section_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="This job has no Airtable-bound static or cyclic test, so "
+                   "there is no imported requirement to verify. Its design "
+                   "pressures are the operator's own input already.")
+
+    if release.is_verified(project) and _has_rig_attempt(db, project):
+        raise HTTPException(
+            status_code=409,
+            detail="This requirement is already verified and a rig attempt has "
+                   "been recorded against it. A requirement snapshot is frozen "
+                   "onto every attempt at start, so changing it now would "
+                   "leave finished tests claiming a requirement they were not "
+                   "run against. Contract §3.3: record a new run instead.")
+
+    mirrored = None
+    for section_id in sorted(section_ids):
+        try:
+            pair, _ = release.typed_pair(db, section_id)
+        except (LookupError, requirements.RequirementError) as exc:
+            raise HTTPException(
+                status_code=409,
+                detail=f"the Airtable requirement is not readable "
+                       f"unambiguously, so there is nothing well-formed to "
+                       f"verify against: {exc}")
+        if pair is not None:
+            mirrored = pair
+            break
+
+    refusal = release.record(
+        project, inward=body.inward_psf, outward=body.outward_psf,
+        unit=body.unit, reference=body.reference, verified_by=body.verified_by,
+        mirrored_pair=mirrored)
+    if refusal:
+        raise HTTPException(status_code=409, detail=refusal)
+    db.commit()
+    db.refresh(project)
+
+    test = next((t for t in list(project.static_tests) + list(project.cyclic_tests)
+                 if getattr(t, "airtable_section_id", None)), None)
+    return release.evaluate(db, project, test).as_dict()
+
+
+def _has_rig_attempt(db, project):
+    """Any static or cyclic attempt at all, in any state."""
+    for test in list(project.static_tests) + list(project.cyclic_tests):
+        if test.trials:
+            return True
+    return False
+
+
 @app.put("/projects/{project_id}/static_tests/{static_test_index}/start",
          response_model=StaticTestSchema)
 def start_static_test(project_id: int, static_test_index: int,
@@ -712,6 +850,8 @@ def start_static_test(project_id: int, static_test_index: int,
         StaticTest.project_id == project_id).first()
     if not test:
         raise HTTPException(status_code=404, detail="Static test not found")
+    project = db.query(Project).filter(Project.id == project_id).first()
+    _require_released(db, project, test)
     if body and body.operator_name:
         test.operator_name = body.operator_name
     db.commit()
@@ -730,6 +870,7 @@ def start_cyclic_test(project_id: int, cyclic_test_index: int,
     cyclic_test = db.query(CyclicTest).filter(CyclicTest.index == cyclic_test_index, CyclicTest.project_id == project_id).first()
     if not cyclic_test:
         raise HTTPException(status_code=404, detail="Cyclic test not found")
+    _require_released(db, db_project, cyclic_test)
 
     # Check if previous tests are finished
     previous_tests = db.query(CyclicTest).filter(CyclicTest.project_id == project_id, CyclicTest.index < cyclic_test.index).all()

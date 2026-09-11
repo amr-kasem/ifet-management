@@ -24,6 +24,7 @@ tests against the same specimen.
 
 import logging
 
+from . import release
 from . import requirements as req
 from .mirror import (AtMirrorProject, AtMirrorProtocol, AtMirrorSection,
                      AtMirrorSpecimen)
@@ -393,5 +394,17 @@ def freeze_requirement(session, attempt, test):
     if section is None:
         return None
     snap = req.snapshot(section)
+
+    # **DG14 / §3.3: the verification is frozen with the requirement, not
+    # looked up later.** By publish time the project may have been re-verified,
+    # and an attempt would then report a verification that happened after it
+    # ran. Absent for a LabOS-only job and for any job whose requirement did
+    # not need verifying, which is the honest state rather than an empty key
+    # claiming a verification exists and is blank.
+    project = getattr(test, "project", None)
+    facts = release.verification_facts(project) if project is not None else None
+    if facts:
+        snap["source_verification"] = facts
+
     attempt.requirement_snapshot = snap
     return snap

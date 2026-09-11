@@ -15,10 +15,11 @@ four parent types, deliberately carrying the **three formats the migration
 exists to unify**: the P1 uuid5, a random uuid4, and the manual slug.
 
 Chain: P1 -> M2 -> d1a6b93f2e57 -> e5f3a71c8d92 -> f7b2c04e19a5 ->
-a3d8e5c71f04 -> b9c1f60d4e27 -> c7e4a2b81f56 -> **a4f18c2d3b90**, then all
-of them down again.
+a3d8e5c71f04 -> b9c1f60d4e27 -> c7e4a2b81f56 -> a4f18c2d3b90 ->
+**e2b9d4c70a15**, then all of them down again.
 
-`a4f18c2d3b90` is the **deployment head** and was added to this chain rather
+`e2b9d4c70a15` is the **deployment head**; `a4f18c2d3b90` was, and both are in
+this chain rather
 than rehearsed on its own, because the property that matters about it is what
 it does to rows that already exist. By the time it runs here the database
 holds the split impact shape with real rows in it, which is the shape the node
@@ -88,6 +89,19 @@ def load_classification():
     migration that only ever meets an empty table has not been rehearsed.
     """
     return _load("a4f18c2d3b90_impact_classification.py", "classification_mig")
+
+
+def load_verification():
+    """`e2b9d4c70a15` — requirement source verification. **The deployment head.**
+
+    Six nullable columns on `projects`, and the same property matters as for
+    the revision below it: what it does to rows that already exist. Historical
+    projects must keep NULL in all six, because these columns say a named
+    person read a named document at a named time and there is no evidence for
+    that claim about the past.
+    """
+    return _load("e2b9d4c70a15_requirement_source_verification.py",
+                 "verification_mig")
 
 
 def seed_legacy_impacts(engine):
@@ -527,6 +541,47 @@ def check_classification(engine):
     return fails
 
 
+VERIFICATION_COLUMNS = ("requirement_verified_inward",
+                        "requirement_verified_outward",
+                        "requirement_verified_unit", "requirement_reference",
+                        "requirement_verified_by", "requirement_verified_at")
+
+
+def check_verification(engine):
+    """Additive, nullable, and no backfill onto existing projects."""
+    fails = []
+    cols = {c["name"]: c for c in sa.inspect(engine).get_columns("projects")}
+    for name in VERIFICATION_COLUMNS:
+        if name not in cols:
+            fails.append(f"{name} missing after the verification upgrade")
+        elif not cols[name]["nullable"]:
+            fails.append(f"{name} is NOT NULL; historical projects cannot "
+                         "satisfy it and must not be made to")
+
+    with engine.begin() as conn:
+        n = conn.execute(sa.text("SELECT count(*) FROM projects")).scalar()
+        where = " AND ".join(f"{c} IS NULL" for c in VERIFICATION_COLUMNS)
+        nulls = conn.execute(sa.text(
+            f"SELECT count(*) FROM projects WHERE {where}")).scalar()
+        if not n:
+            fails.append("no pre-existing projects to check against")
+        elif nulls != n:
+            fails.append(
+                f"{n - nulls} of {n} existing projects were backfilled with a "
+                "verification. A verification asserts that a person read a "
+                "document; there is no evidence for that about the past.")
+    return fails
+
+
+def check_verification_downgrade(engine):
+    fails = []
+    cols = {c["name"] for c in sa.inspect(engine).get_columns("projects")}
+    for name in VERIFICATION_COLUMNS:
+        if name in cols:
+            fails.append(f"downgrade left {name} behind")
+    return fails
+
+
 def check_classification_downgrade(engine):
     """Down must leave the table exactly as it found it."""
     fails = []
@@ -553,7 +608,12 @@ def main():
     art, op, mir = load_artifacts(), load_operator(), load_mirror()
     split = load_split()
     cls = load_classification()
+    ver = load_verification()
 
+    if ver.down_revision != cls.revision:
+        print(f"  FAIL {ver.revision} revises {ver.down_revision!r}, "
+              f"not {cls.revision!r}")
+        return 1
     if cls.down_revision != split.revision:
         print(f"  FAIL {cls.revision} revises {cls.down_revision!r}, "
               f"not {split.revision!r}")
@@ -580,7 +640,8 @@ def main():
         return 1
     print(f"ordering OK: {p1.revision} -> {m2.revision} -> {mt.revision} "
           f"-> {uq.revision} -> {art.revision} -> {op.revision} "
-          f"-> {mir.revision} -> {split.revision} -> {cls.revision}")
+          f"-> {mir.revision} -> {split.revision} -> {cls.revision} "
+          f"-> {ver.revision}")
 
     with engine.begin() as conn:
         conn.exec_driver_sql("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
@@ -631,7 +692,7 @@ def main():
 
     # --- the deployment head, over rows that already exist -----------------
     apply(engine, cls, "upgrade")
-    print(f"impact-classification {cls.revision} upgraded — THE DEPLOYMENT HEAD")
+    print(f"impact-classification {cls.revision} upgraded")
     cls_failures = check_classification(engine)
     failures += cls_failures
     if not cls_failures:
@@ -642,6 +703,18 @@ def main():
         print("artifact delivery keyed on the photograph, publication failures "
               "unique per (attempt, phase), operator_name on all four tables, "
               "mirror present with no column for `Value`")
+
+    apply(engine, ver, "upgrade")
+    print(f"requirement-verification {ver.revision} upgraded — THE DEPLOYMENT HEAD")
+    ver_failures = check_verification(engine)
+    failures += ver_failures
+    if not ver_failures:
+        print("six nullable columns on projects, and every existing project "
+              "still NULL in all six")
+
+    apply(engine, ver, "downgrade")
+    print(f"requirement-verification {ver.revision} downgraded")
+    failures += check_verification_downgrade(engine)
 
     apply(engine, cls, "downgrade")
     print(f"impact-classification {cls.revision} downgraded")

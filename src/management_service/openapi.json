@@ -1106,6 +1106,116 @@
         }
       }
     },
+    "/projects/{project_id}/requirement-release": {
+      "get": {
+        "summary": "Get Requirement Release",
+        "description": "May this job's rig tests run, and if not, what has to happen first?\n\nServed from the **same** `release.evaluate` the start path enforces, so a\nscreen cannot show a green light the backend will refuse. `code` is a\nstable token to branch on; `reason` is the sentence to show the operator.",
+        "operationId": "get_requirement_release_projects__project_id__requirement_release_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "static_test_index",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Static Test Index"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "static",
+              "title": "Kind"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequirementReleaseSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/requirement-verification": {
+      "post": {
+        "summary": "Verify Requirement",
+        "description": "Record the design-pressure pair as read off the trusted proposal.\n\n**The control DG14 needs, and the only one that can work.** A shifted value\nis individually plausible, so nothing can detect it by looking at it. What\ncatches it is a second independent reading of the same fact: this route\ntakes the operator's, compares it with what LabOS mirrored from Airtable,\nand **refuses the two to disagree**.\n\nA disagreement is a `409` and **nothing is stored**. LabOS does not pick a\nwinner between two contradicting sources \u2014 publishing a result against a\nrequirement we chose for ourselves is the failure mode, not the fix \u2014 and\nstoring a pair nobody believes would leave the job permanently stuck with a\nwrong number in it.\n\nImmutable once a rig attempt exists. Before that it may be re-recorded: a\ntypo caught immediately should not need a new job. \u00a73.3: changes after\nstart require a new run, not a mutated active snapshot.",
+        "operationId": "verify_requirement_projects__project_id__requirement_verification_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequirementVerificationSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequirementReleaseSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/projects/{project_id}/static_tests/{static_test_index}/start": {
       "put": {
         "summary": "Start Static Test",
@@ -4690,6 +4800,103 @@
           "cyclic_tests"
         ],
         "title": "ProjectSchema"
+      },
+      "RequirementReleaseSchema": {
+        "properties": {
+          "executable": {
+            "type": "boolean",
+            "title": "Executable"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason",
+            "default": ""
+          },
+          "airtable_section_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Airtable Section Id"
+          },
+          "imported_pair_psf": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Imported Pair Psf"
+          },
+          "verified_pair_psf": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verified Pair Psf"
+          }
+        },
+        "type": "object",
+        "required": [
+          "executable",
+          "code"
+        ],
+        "title": "RequirementReleaseSchema",
+        "description": "Why a test may or may not run, for the operator's screen.\n\nServed from the same `release.evaluate` the start path enforces, so what\nthe operator is told and what the backend does cannot drift apart."
+      },
+      "RequirementVerificationSchema": {
+        "properties": {
+          "inward_psf": {
+            "type": "number",
+            "title": "Inward Psf"
+          },
+          "outward_psf": {
+            "type": "number",
+            "title": "Outward Psf"
+          },
+          "unit": {
+            "type": "string",
+            "title": "Unit"
+          },
+          "reference": {
+            "type": "string",
+            "title": "Reference"
+          },
+          "verified_by": {
+            "type": "string",
+            "title": "Verified By"
+          }
+        },
+        "type": "object",
+        "required": [
+          "inward_psf",
+          "outward_psf",
+          "unit",
+          "reference",
+          "verified_by"
+        ],
+        "title": "RequirementVerificationSchema",
+        "description": "The design-pressure pair as read off the trusted proposal \u2014 \u00a73.3, DG14.\n\nEvery field is required and none is defaulted. A reference that defaults to\nan empty string, or a verifier that defaults to \"operator\", would satisfy\nthe letter of \u00a73.3 while recording that nobody in particular read nothing\nin particular \u2014 and \u00a73.3 says an operator provenance tag alone is\ninsufficient precisely to head that off.\n\n`unit` is here rather than assumed so that sending the pair in the wrong\nunit is a refusal rather than a silent reinterpretation. It is checked\nagainst PSF, not converted."
       },
       "RunStartSchema": {
         "properties": {
