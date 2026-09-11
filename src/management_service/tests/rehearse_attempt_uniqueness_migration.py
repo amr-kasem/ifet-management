@@ -15,7 +15,14 @@ four parent types, deliberately carrying the **three formats the migration
 exists to unify**: the P1 uuid5, a random uuid4, and the manual slug.
 
 Chain: P1 -> M2 -> d1a6b93f2e57 -> e5f3a71c8d92 -> f7b2c04e19a5 ->
-a3d8e5c71f04 -> b9c1f60d4e27, then all seven down.
+a3d8e5c71f04 -> b9c1f60d4e27 -> c7e4a2b81f56 -> **a4f18c2d3b90**, then all
+of them down again.
+
+`a4f18c2d3b90` is the **deployment head** and was added to this chain rather
+than rehearsed on its own, because the property that matters about it is what
+it does to rows that already exist. By the time it runs here the database
+holds the split impact shape with real rows in it, which is the shape the node
+will be in.
 """
 
 import os
@@ -69,6 +76,18 @@ def load_mirror():
 def load_split():
     """`c7e4a2b81f56` — one attempt per impact, splitting the existing rows."""
     return _load("c7e4a2b81f56_impact_one_attempt_per_impact.py", "split_mig")
+
+
+def load_classification():
+    """`a4f18c2d3b90` — the impact classification pair. **The deployment head.**
+
+    Additive: three nullable columns and one named CHECK. It is in this chain
+    rather than rehearsed alone because the property that matters is what it
+    does to rows that already exist — the node has 39 impact tests, and after
+    the split above this database has the same shape with rows in it. A
+    migration that only ever meets an empty table has not been rehearsed.
+    """
+    return _load("a4f18c2d3b90_impact_classification.py", "classification_mig")
 
 
 def seed_legacy_impacts(engine):
@@ -454,6 +473,74 @@ def check_refuses_real_duplicates(engine, uq):
     return []
 
 
+def check_classification(engine):
+    """Additive, historical rows keep NULL, and the CHECK refuses only the
+    pairing that can never mean anything."""
+    fails = []
+    insp = sa.inspect(engine)
+    cols = {c["name"]: c for c in insp.get_columns("missile_impact_tests")}
+    for name in ("impact_family", "impact_level", "target_velocity"):
+        if name not in cols:
+            fails.append(f"{name} missing after the classification upgrade")
+        elif not cols[name]["nullable"]:
+            fails.append(f"{name} is NOT NULL; historical rows cannot satisfy it")
+
+    with engine.begin() as conn:
+        # **The whole no-backfill claim, asserted rather than believed.**
+        n = conn.execute(sa.text("SELECT count(*) FROM missile_impact_tests")).scalar()
+        nulls = conn.execute(sa.text(
+            "SELECT count(*) FROM missile_impact_tests WHERE impact_family IS NULL "
+            "AND impact_level IS NULL AND target_velocity IS NULL")).scalar()
+        if not n:
+            fails.append("no pre-existing impact tests to check against")
+        elif nulls != n:
+            fails.append(f"{n - nulls} of {n} historical rows were backfilled; "
+                         "nothing may infer a family, a level or a target velocity")
+
+        # The pairing the database refuses, and the three it must not.
+        ok_rows = (("LMI", "D", 50.25), ("LMI", "E", 55.5), ("SMI", None, 130.0))
+        for i, (fam, lvl, vel) in enumerate(ok_rows):
+            try:
+                conn.execute(sa.text(
+                    "UPDATE missile_impact_tests SET impact_family=:f, "
+                    "impact_level=:l, target_velocity=:v WHERE id="
+                    "(SELECT min(id) FROM missile_impact_tests)"),
+                    {"f": fam, "l": lvl, "v": vel})
+            except Exception as exc:                            # noqa: BLE001
+                fails.append(f"CHECK refused a legal pairing {fam}/{lvl}: "
+                             f"{str(exc)[:120]}")
+        conn.execute(sa.text(
+            "UPDATE missile_impact_tests SET impact_family=NULL, "
+            "impact_level=NULL, target_velocity=NULL"))
+
+    refused = False
+    try:
+        with engine.begin() as conn:
+            conn.execute(sa.text(
+                "UPDATE missile_impact_tests SET impact_family='SMI', "
+                "impact_level='D' WHERE id=(SELECT min(id) FROM missile_impact_tests)"))
+    except Exception:                                           # noqa: BLE001
+        refused = True
+    if not refused:
+        fails.append("the CHECK allowed SMI with a level; that pairing can "
+                     "never be meaningful whatever the vocabulary becomes")
+    return fails
+
+
+def check_classification_downgrade(engine):
+    """Down must leave the table exactly as it found it."""
+    fails = []
+    insp = sa.inspect(engine)
+    cols = {c["name"] for c in insp.get_columns("missile_impact_tests")}
+    for name in ("impact_family", "impact_level", "target_velocity"):
+        if name in cols:
+            fails.append(f"downgrade left {name} behind")
+    names = {c["name"] for c in insp.get_check_constraints("missile_impact_tests")}
+    if "ck_missile_impact_tests_smi_has_no_level" in names:
+        fails.append("downgrade left the CHECK behind")
+    return fails
+
+
 def main():
     url = os.environ.get("M2_DATABASE_URL")
     if not url or not url.startswith("postgresql"):
@@ -465,7 +552,12 @@ def main():
     p1, m2, mt, uq = load_p1(), load_m2(), load_mt(), load_uq()
     art, op, mir = load_artifacts(), load_operator(), load_mirror()
     split = load_split()
+    cls = load_classification()
 
+    if cls.down_revision != split.revision:
+        print(f"  FAIL {cls.revision} revises {cls.down_revision!r}, "
+              f"not {split.revision!r}")
+        return 1
     if art.down_revision != uq.revision:
         print(f"  FAIL {art.revision} revises {art.down_revision!r}, "
               f"not {uq.revision!r}")
@@ -488,7 +580,7 @@ def main():
         return 1
     print(f"ordering OK: {p1.revision} -> {m2.revision} -> {mt.revision} "
           f"-> {uq.revision} -> {art.revision} -> {op.revision} "
-          f"-> {mir.revision} -> {split.revision}")
+          f"-> {mir.revision} -> {split.revision} -> {cls.revision}")
 
     with engine.begin() as conn:
         conn.exec_driver_sql("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
@@ -536,10 +628,24 @@ def main():
         print("each impact is its own attempt, renumbered across the test, "
               "outcomes taken from the impacts, evidence followed")
     failures += check_split_is_idempotent(engine, split)
+
+    # --- the deployment head, over rows that already exist -----------------
+    apply(engine, cls, "upgrade")
+    print(f"impact-classification {cls.revision} upgraded — THE DEPLOYMENT HEAD")
+    cls_failures = check_classification(engine)
+    failures += cls_failures
+    if not cls_failures:
+        print("three nullable columns, every historical row still NULL in all "
+              "three, and the CHECK refuses SMI-with-a-level and nothing else")
+
     if not failures:
         print("artifact delivery keyed on the photograph, publication failures "
               "unique per (attempt, phase), operator_name on all four tables, "
               "mirror present with no column for `Value`")
+
+    apply(engine, cls, "downgrade")
+    print(f"impact-classification {cls.revision} downgraded")
+    failures += check_classification_downgrade(engine)
 
     for mig, label in ((split, "impact-split"),
                        (mir, "mirror-and-freeze"), (op, "run-start-operator"),
