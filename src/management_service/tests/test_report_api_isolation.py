@@ -159,5 +159,36 @@ class ReportApiIsolation(unittest.TestCase):
                 "must stay transport-free")
 
 
+class TheCommittedApiContractIsCurrent(unittest.TestCase):
+    """`openapi.json` is what the UI developer builds against.
+
+    It is a committed snapshot, not a generated-on-read artifact, so it goes
+    stale silently — and it had: the correction route (2026-09-08) and the
+    impact PATCH route (2026-09-10) were both live and both missing from it,
+    while the developer blocked on TC5 was reading it as the contract. A
+    passing suite said nothing, because nothing compared the two.
+
+    Same shape as `check_register.py` check 7, and for the same reason: a
+    document that goes out for somebody else to build against is the one
+    drift that must not be possible.
+    """
+
+    def test_the_snapshot_matches_the_live_app(self):
+        import json                                          # noqa: PLC0415
+        from app import main                                 # noqa: PLC0415
+        snapshot = json.loads((ROOT.parent / "openapi.json").read_text())
+        live = main.app.openapi()
+        self.assertEqual(
+            sorted(snapshot["paths"]), sorted(live["paths"]),
+            "openapi.json does not list the routes the app actually serves. "
+            "Regenerate it:\n"
+            "  python -c \"import json;from app.main import app;"
+            "print(json.dumps(app.openapi(),indent=2))\" > openapi.json")
+        for path in live["paths"]:
+            self.assertEqual(
+                sorted(snapshot["paths"][path]), sorted(live["paths"][path]),
+                f"{path}: the snapshot's methods differ from the app's")
+
+
 if __name__ == "__main__":
     unittest.main()

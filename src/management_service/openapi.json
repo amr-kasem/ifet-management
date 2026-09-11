@@ -1962,7 +1962,7 @@
     "/projects/{project_id}/impact-tests/": {
       "post": {
         "summary": "Create Impact Test",
-        "description": "Create the test. Missile and weight are optional \u2014 the protocol fixes\nthem, so requiring them per test was retyping rather than data capture.",
+        "description": "Create the test. Missile and weight are optional \u2014 the protocol fixes\nthem, so requiring them per test was retyping rather than data capture.\n\nThe classification and target velocity are optional here too, and for a\ndifferent reason: neither is known when the test object is made. They are\nrequired by the time an attempt completes, and `PATCH` is how they arrive.",
         "operationId": "create_impact_test_projects__project_id__impact_tests__post",
         "parameters": [
           {
@@ -2033,6 +2033,65 @@
                     "$ref": "#/components/schemas/ImpactTestSchema"
                   },
                   "title": "Response List Impact Tests Projects  Project Id  Impact Tests  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/impact-tests/{test_id}": {
+      "patch": {
+        "summary": "Update Impact Test",
+        "description": "Set the impact level and target velocity before an attempt completes.\n\nNone of them is required when the test is created, so this is the\nsupported route that supplies them afterwards.\n\nTwo different lifetimes, deliberately. `impact_family` is write-once and\nLabOS-only: a bound test's family belongs to its requirement code, and any\nattempt at all \u2014 aborted included \u2014 fixes it, because the family is the\ncontext that attempt ran in. `impact_level` and `target_velocity` stay\neditable until an attempt *completes*, because until then nothing has been\nclaimed.",
+        "operationId": "update_impact_test_projects__project_id__impact_tests__test_id__patch",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "test_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Test Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImpactTestUpdateSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImpactTestSchema"
                 }
               }
             }
@@ -2229,6 +2288,56 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/AttemptFinishSchema"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttemptSchema"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/test-results/{test_result_id}/correct": {
+      "post": {
+        "summary": "Correct Attempt",
+        "description": "Supersede a recorded result with a new attempt that names it.\n\n**The gap this closes.** `corrects_attempt_id` and `correction_reason` have\nhad columns, a property and an envelope mapping since P1, and nothing set\nthem \u2014 so every attempt was a retest, and a wrongly recorded result could\nonly be superseded by claiming a physical test that never happened. There is\nalso no edit or delete route for a shot or an attempt, by design, so until\nthis existed a mis-recorded result had no route at all.\n\nWhy it matters beyond our own records: the change document's \u00a70.3 argument to\nthe Airtable team is that a retest and a correction are indistinguishable\nwithout this field, and that a roll-up counting attempts would then be wrong\n*and look right*. This is the half of that promise that lives on our side.\n\nThe correction starts **open**, and is recorded and finished through the\nordinary paths. So there is one lifecycle rather than two, and a correction\nis an ordinary attempt that happens to name its predecessor.\n\nThree refusals, each for a different reason:\n\n* **The original must be terminal.** An open attempt is finished correctly,\n  not corrected \u2014 its evidence is not frozen yet, so there is nothing to\n  supersede.\n* **The test must have no open attempt.** A correction creates one, and two\n  open attempts for one test make \"the current attempt\" ambiguous.\n* **A reason is required** \u2014 enforced in `attempts.as_correction`, because\n  contract \u00a74.1 puts it in the always-required set beside the reference.\n\nDeliberately *not* refused when the parent test is `finished`. Correcting a\nrecord is not running the rig again, and a finished test is exactly where a\ncorrection is most likely to be needed.",
+        "operationId": "correct_attempt_test_results__test_result_id__correct_post",
+        "parameters": [
+          {
+            "name": "test_result_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Test Result Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AttemptCorrectSchema"
               }
             }
           }
@@ -2747,7 +2856,7 @@
     "/test-results/{test_result_id}/shots": {
       "post": {
         "summary": "Record Shot",
-        "description": "Record one impact \u2014 numbered, with its outcome.\n\nAn impact test is a sequence: impact 1, 2, 3. `shot_number` is allocated\nhere rather than accepted from the client, because a client that chose its\nown could number two impacts the same or renumber a sequence someone has\nalready photographed.",
+        "description": "Record this attempt's impact \u2014 one attempt, one impact.\n\n**One attempt per impact** (delivery plan \u00a74.5a, product owner 2026-09-08).\nAn impact test is still a sequence \u2014 impact 1, 2, 3 \u2014 but the sequence is\nmade of attempts, not of shots inside one attempt. So this route records the\nsingle impact belonging to this attempt, and the next impact is the next\nattempt.\n\n`shot_number` mirrors `attempt.trial_number` rather than counting within the\nattempt. Counting would give every impact `shot_number = 1`, and the number\nis not internal: the published JSON emits it as which impact this is. The\nmirror also makes the invariant free \u2014 two impacts on one attempt collide on\n`uq_shots_attempt_number`, so \"exactly one impact per attempt\" is enforced\nby a constraint that already existed rather than by a rule in this function.\nThe 409 below is that collision reported in words; the constraint is what\nguarantees it.",
         "operationId": "record_shot_test_results__test_result_id__shots_post",
         "parameters": [
           {
@@ -2889,6 +2998,31 @@
   },
   "components": {
     "schemas": {
+      "AttemptCorrectSchema": {
+        "properties": {
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "operator_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operator Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "reason"
+        ],
+        "title": "AttemptCorrectSchema",
+        "description": "Supersede a recorded result: a new attempt naming the one it replaces.\n\n`reason` is required and not defaulted. Contract \u00a74.1 puts it in the\nalways-required set beside `Corrects Attempt ID`, because a correction with\nno stated reason is indistinguishable downstream from a retest \u2014 and the\nchange document's argument to the Airtable team is precisely that those two\nmust never be confusable.\n\nNo `result` here. A correction starts open and is recorded and finished\nthrough the ordinary paths, so there is one lifecycle rather than two: the\ncorrection is a normal attempt that happens to name its predecessor."
+      },
       "AttemptFinishSchema": {
         "properties": {
           "result": {
@@ -3093,6 +3227,28 @@
               }
             ],
             "title": "Result Rationale"
+          },
+          "corrects_attempt_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrects Attempt Id"
+          },
+          "correction_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction Reason"
           },
           "testing_start_date": {
             "anyOf": [
@@ -3746,6 +3902,39 @@
               }
             ],
             "title": "Airtable Section Name"
+          },
+          "impact_family": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Impact Family"
+          },
+          "impact_level": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Impact Level"
+          },
+          "target_velocity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Velocity"
           }
         },
         "type": "object",
@@ -3821,6 +4010,50 @@
             ],
             "title": "Airtable Section Name"
           },
+          "impact_family": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Impact Family"
+          },
+          "impact_level": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Impact Level"
+          },
+          "target_velocity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Velocity"
+          },
+          "impact_classification": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Impact Classification"
+          },
           "trials": {
             "items": {
               "$ref": "#/components/schemas/AttemptSchema"
@@ -3837,6 +4070,47 @@
           "finished"
         ],
         "title": "ImpactTestSchema"
+      },
+      "ImpactTestUpdateSchema": {
+        "properties": {
+          "impact_family": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Impact Family"
+          },
+          "impact_level": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Impact Level"
+          },
+          "target_velocity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Velocity"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ImpactTestUpdateSchema",
+        "description": "Set the classification and target velocity before completion.\n\nExists because none of these is required when the test is created, so\nthere has to be a supported route to supply them afterwards.\n\n`impact_family` is **write-once and LabOS-only**. An earlier draft omitted\nit entirely, which left a test created with `{}` unable ever to acquire a\nfamily and therefore unable ever to finish. The route allows it while the\ntest is unbound and unexecuted, and refuses it otherwise: a bound test's\nfamily belongs to its requirement code, and once any attempt exists \u2014\naborted included \u2014 the family is the context that attempt ran in, so\nchanging it would rewrite what the attempt meant.\n\n`impact_level` and `target_velocity` keep the looser rule: editable until\nan attempt actually *completes*, because until then nothing has been\nclaimed."
       },
       "ImportRequestSchema": {
         "properties": {
@@ -4087,6 +4361,61 @@
             },
             "type": "array",
             "title": "Shots"
+          },
+          "airtable_section_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Airtable Section Id"
+          },
+          "impact_family": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Impact Family"
+          },
+          "impact_level": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Impact Level"
+          },
+          "target_velocity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target Velocity"
+          },
+          "impact_classification": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Impact Classification"
           }
         },
         "type": "object",

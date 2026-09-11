@@ -404,3 +404,36 @@ Two things worth building around:
 deflections, so the operator declared here is what lets the attempt complete and
 publish — without it the attempt stays `In Progress` and the refusal shows up in
 `/sync/failures`.
+
+### Corrections — and why a correction is not a retest
+
+`POST /test-results/{id}/correct` — added 2026-09-08 (TC1g), and **the screen has to tell the two
+apart**, because Airtable cannot.
+
+A **retest** is a new attempt at the same test: the first one happened, and its record stands. A
+**correction** says the earlier attempt's record is wrong — mis-typed, recorded against the wrong
+specimen, attributed to the wrong operator. Both produce a new attempt; only one of them means
+"disregard the previous row".
+
+| | |
+|---|---|
+| Body | `{"reason": "..."}` — required, and it is the operator's words, not a code |
+| Returns | a new attempt, **open**, which is then recorded and finished through the ordinary routes |
+| Sets | `corrects_attempt_id` → the corrected attempt's `LabOS Attempt ID`, and `correction_reason` |
+| Publishes as | `Corrects Attempt ID` and `Correction Reason` on the new row. Both are **blank on an ordinary attempt and on a retest** |
+| Works on | a terminal attempt, **aborted included**, and on a test that is already `finished` |
+
+Three refusals, and each means something different on a screen:
+
+| | `400` when |
+|---|---|
+| The original is still open | An open attempt is *finished* correctly, not corrected — its evidence is not frozen yet, so there is nothing to supersede. Offer "finish" or "abort", not "correct" |
+| The test already has an open attempt | A correction creates one, and two open attempts make "the current attempt" ambiguous. Resolve the open one first |
+| The attempt predates the per-type attempt tables | Its parent test cannot be resolved. Historical rows are not correctable through this route |
+
+**Nothing is deleted or edited.** Attempts are append-only: the original row stays in Airtable exactly
+as it was, and the correction points at it. That is what lets somebody reading their base six months
+later see both what was recorded and what replaced it.
+
+**Do not offer "correct" as a synonym for "try again".** A correction that is really a retest puts a
+`Corrects Attempt ID` on a row that supersedes nothing, and there is no route that takes it back.
