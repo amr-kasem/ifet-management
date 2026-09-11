@@ -4,6 +4,14 @@
 not the Airtable interface contract and nothing here crosses that boundary —
 these routes never call Airtable, and Airtable never calls them.
 
+> ⚠️ **This is the API reference, not the UI implementation contract.** What the
+> screens must do — which workflow obtains its test object how, which controls
+> exist, what the operator may and may not be offered — is
+> `ifet-firmware/docs/labos-airtable/contract/tc5-ui-developer-handoff-2026-09-11.md`,
+> and **that document wins on any domain question**. This one describes the
+> routes underneath it in more depth. Where the two ever disagree, the handoff
+> is right and this file is a bug.
+
 Routes covering **Impact**, **Forced Entry** and **ANSI Z97.1**: the three
 tests an operator enters by hand. Static Load and Cycles are unchanged and are
 not described here.
@@ -11,15 +19,23 @@ not described here.
 Machine-readable: `src/management_service/openapi.json`, or `/docs` on a running
 instance. Both are regenerated from the running app, not hand-written.
 
-**What is actually verified**, as of 2026-09-08 — because "documented" and
+**What is actually verified**, as of 2026-09-11 — because "documented" and
 "tested" are not the same thing:
 
-- **All 18 routes are exercised by the suite.** `tests/route_coverage.py` records
+- **The manual-test surface is now 20 routes**, not the 18 of 2026-09-08:
+  `POST /test-results/{id}/correct` and `PATCH /projects/{pid}/impact-tests/{id}`
+  were added after that count was written. `route_coverage.py` reports 25,
+  which is these 20 plus the five `/sync` routes it also watches.
+- **All of them are exercised by the suite.** `tests/route_coverage.py` records
   the matched route of every request the tests make and exits non-zero if any is
   unexercised, so a route added without a test fails rather than passes quietly.
   It was written because the honest answer to "are they all tested?" was 13 of 18.
-- **246 tests + 84 subtests** against **PostgreSQL 13**, the version production
-  runs — not SQLite.
+- **433 tests + 108 subtests** against **PostgreSQL 13**, the version production
+  runs — not SQLite. Verified 2026-09-11, every suite green.
+  ⚠️ **Run the suites per file.** Collecting all 14 into one pytest process
+  exhausts `postgres:13`'s 100 connections part-way through and reports
+  `FATAL: sorry, too many clients already` as a wave of unrelated failures.
+  That is the harness, not the code: each file passes on its own.
 - **The migration is rehearsed against populated tables**, not an empty database:
   P1 → M2 → `d1a6b93f2e57` in one ordered upgrade, with the 114-shot backfill,
   then rolled back.
@@ -41,9 +57,16 @@ Two things worth knowing before building screens:
 - **ANSI Z97.1 is also an impact test**, but a different one — it qualifies the
   *glass*, which is why it is normally done first. Missile Impact qualifies the
   *assembly*. They are separate test types on purpose.
-- **None of the three touches the rig.** No VFD, no valves, no pressure, no
-  gauges, no MQTT. There is no "running" state to poll and no hardware to wait
-  on — these are forms.
+- **None of the three *commands* the rig, but all three *occupy* it.** No VFD,
+  no valves, no pressure, no gauges — `report-api` has no MQTT client at all, so
+  there is no "running" state to poll and no hardware to wait on. The data entry
+  is a form.
+  **What is not a form: the rig lock.** All four attempt types share
+  `attempts.rig_is_busy`, which is keyed on the project's `device_id`. So
+  starting a Forced Entry attempt on a rig with an open Cycles attempt is a
+  `409`, and an open Impact attempt will block a Static Load one the same way.
+  One rig holds one specimen and runs one test at a time; that is a physical
+  fact, and these tests are inside it rather than beside it.
 
 ---
 
@@ -130,44 +153,105 @@ Then the shared attempt routes in §5.
 An impact test is a **sequence**: impact 1, impact 2, impact 3 — each numbered,
 each with its own pass/fail, each with its own photographs.
 
+**The sequence is made of attempts, not of shots inside one attempt.**
+(Delivery plan §4.5a, product owner 2026-09-08.) This is the one thing in this
+document most likely to be remembered wrongly, because it used to be the other
+way round:
+
 ```
 impact test
-  └── attempt 1
-        ├── impact 1   result: pass    photos: [ ]
-        ├── impact 2   result: pass    photos: [ 1 ]
-        └── impact 3   result: FAIL    photos: [ wide shot, corner detail, interior face ]
-        └── attempt-level photos: [ specimen before ]
+  ├── attempt 1  ──►  impact 1   result: pass   photos: [ setup, face ]   ──► Airtable row 1
+  ├── attempt 2  ──►  impact 2   result: pass   photos: [ face ]          ──► Airtable row 2
+  └── attempt 3  ──►  impact 3   result: FAIL   photos: [ wide, corner ]  ──► Airtable row 3
 ```
 
-**Any impact can carry any number of photographs, including none.** `POST
-/shots/{id}/photos` is repeatable; `photos` on each impact is a list, returned in
-upload order. An attempt also has its own photographs — the specimen before
-testing, the overall setup — which have `shot_id: null`.
+**One physical impact = one attempt = one `Shot` = one Airtable row.** Five
+impacts are five attempts and five rows, each separately finished and separately
+reviewed. There is no attempt that holds a sequence.
 
 | Route | |
 |---|---|
-| `POST /projects/{pid}/impact-tests/` | create the test. **Everything optional** — the protocol fixes the missile, so `{}` is valid |
+| `POST /projects/{pid}/impact-tests/` | create the test. **Everything optional** — `{}` is valid. ⚠️ **Not for an imported job**: the importer already created it. See §7 |
 | `GET /projects/{pid}/impact-tests/` | list with attempts |
-| `POST /projects/{pid}/impact-tests/{id}/trials` | start an attempt |
+| `PATCH /projects/{pid}/impact-tests/{id}` | set `impact_level` / `target_velocity` (and `impact_family` on a LabOS-only test). See §7 |
+| `POST /projects/{pid}/impact-tests/{id}/trials` | **start one impact** |
 | `GET /projects/{pid}/impact-tests/{id}/trials` | attempts in order |
-| `PUT /projects/{pid}/impact-tests/{id}/finish` | mark the test complete |
-| `POST /test-results/{aid}/shots` | **record one impact** — `{"result": true}`. `result` is the only required field; `area`, `velocity`, `note` optional. Omitting it is **422** |
-| `GET /test-results/{aid}/shots` | the impacts **in order**, each with its photographs |
-| `POST /shots/{sid}/photos` | photograph of **one specific impact**; call it once per photograph |
+| `PUT /projects/{pid}/impact-tests/{id}/finish` | mark the **whole test** complete — not one impact. See below |
+| `POST /test-results/{aid}/shots` | **record this attempt's one impact** — `{"result": true}`. `result` is the only required field; `area`, `velocity`, `note` optional. Omitting it is **422** |
+| `GET /test-results/{aid}/shots` | this attempt's impact |
+| `POST /shots/{sid}/photos` | photograph of that impact; call it once per photograph |
 
-**`shot_number` is allocated server-side** — 1, 2, 3 in recording order,
-restarting at 1 for each attempt. Not accepted from the client: one that chose
-its own could number two impacts the same, or renumber a sequence already
-photographed. Sending it is ignored, not rejected.
+**A second `POST …/shots` on the same attempt is `409`**, not a second impact.
+The message says so: *"One attempt is one impact — start a new attempt on this
+test to record the next one."* The invariant is a database constraint
+(`uq_shots_attempt_number`), not a rule in the route.
 
-**Finishing an impact attempt** additionally requires at least one impact and at
-least one photograph (not when aborting). A per-impact photograph counts, so
-photographing the impacts satisfies it without a separate upload.
+**`shot_number` mirrors `attempt.trial_number`** — it is **not** a counter inside
+the attempt, and it does **not** restart at 1. Impact 3 is attempt 3 and carries
+`shot_number = 3`. Allocated server-side; sending one is ignored, not rejected.
 
-The photo requirement is enforced at finish, **not** when publishing to Airtable:
-attachments deliver on their own channel and may settle later, so making an
-upload a precondition for publishing would let a queued file block a measured
-result.
+**`Impact Number` on the Airtable row is `attempt.trial_number`** — the same
+value, published under its own name, and omitted entirely on the other four test
+types rather than sent as 0.
+
+### Two different "finish" operations, and they are not interchangeable
+
+| | Route | Means |
+|---|---|---|
+| **Attempt finish** | `PUT /test-results/{aid}/finish` | *this impact* is done. Called once per impact |
+| **Test finish** | `PUT /projects/{pid}/impact-tests/{id}/finish` | *the whole impact test* is done. Called once, at the end |
+
+`PUT …/impact-tests/{id}/finish` sets `finished = True`, and after it
+`POST …/trials` returns **400** — so it closes the test to further impacts. It
+is the operator declaring the sequence over.
+
+⚠️ **Nothing checks it against the required impact count.** `projects.impact_count`
+is accumulated at import from the `IMPACT_LMI` / `IMPACT_SMI` sections'
+`Required Value`, and it is carried in the published JSON as a requirement — but
+no route compares it to the number of attempts. Finishing after three of five
+impacts is accepted. **If the screen is to warn, the warning is the screen's**;
+the API will not refuse it.
+
+### What an impact attempt needs before it can be completed
+
+`PUT /test-results/{aid}/finish` with no `abort_reason` refuses with **400**
+unless all four hold:
+
+1. **Exactly one impact** on the attempt — not "at least one". Zero has nothing
+   to report; two is a shape the constraint already refused.
+2. **At least one photograph on the attempt.** A per-impact photograph counts —
+   it carries the attempt id as well as the shot id — so photographing the impact
+   satisfies this without a separate upload.
+3. **A resolvable `impact_classification`** on the test (§7).
+4. **A `target_velocity`** on the test (§7).
+
+**An abort needs none of them.** `{"abort_reason": "Equipment Fault"}` is always
+accepted on an open attempt.
+
+`result` is **not** required in the finish body for an impact attempt: the
+attempt's outcome is its impact's outcome, copied from the shot. Send it and it
+is honoured; omit it and it is derived. For Forced Entry and ANSI it *is*
+required, because there is no shot to derive it from.
+
+The photograph requirement is enforced at finish, **not** when publishing to
+Airtable: attachments deliver on their own channel and may settle later, so
+making an upload a precondition for publishing would let a queued file block a
+measured result.
+
+### Photographs on an impact attempt
+
+Any impact may carry **any number** of photographs, and an attempt may also carry
+its own — the specimen before testing, the overall setup — with `shot_id: null`.
+The attempt's `photos` list contains **both**, which is what makes a per-impact
+photograph satisfy the finish gate.
+
+⚠️ **"Zero photographs on an impact" is no longer a normal state.** It was, when
+one attempt held several impacts and only the attempt needed evidence. Now the
+attempt *is* the impact, so an impact with no photograph is an attempt that
+cannot be completed — only aborted.
+
+Photographs may be added between termination and the verdict. After the verdict
+they are **409**: evidence is frozen, and adding to it requires a correction.
 
 ## 5. The attempt routes — all five test types
 
@@ -215,11 +299,38 @@ project once sees all five test types.
 
 ## 7. What the UI needs to supply, and where it comes from
 
+### ⚠️ First: for an imported job, do not create the test at all
+
+**`POST /airtable/import` already creates the Forced Entry, ANSI Z97.1 and Impact
+tests**, one per executable Protocol Section, in `importer.bind`. They come back
+on the import response — `manual_tests[]` and `missile_impact_tests[]` on
+`ProjectSchema` — already carrying `airtable_protocol_id`,
+`airtable_section_id`, `airtable_section_name`, `required_option` and, for
+Impact, a frozen `impact_family`.
+
+So for Airtable-bound work the UI **selects an existing test and starts an
+attempt on it**. Calling `POST …/manual-tests/` or `POST …/impact-tests/`
+afterwards creates a **second, parallel test** with its own `labos_test_id`,
+which publishes as an unrelated group of rows in Airtable. Nothing refuses it —
+it is a legal call — so this is a rule the screen has to keep.
+
+| | Airtable-bound job | LabOS-only job |
+|---|---|---|
+| Where the test comes from | **the import.** Select it | **`POST …/manual-tests/` or `POST …/impact-tests/`.** Create it |
+| `type` (FE / ANSI) | set from `Requirement Code` | operator chooses |
+| `impact_family` | frozen by the importer from `IMPACT_SMI` / `IMPACT_LMI` | operator chooses, write-once |
+| `required_option` | copied from `Required Option`, may be blank | operator types, may be blank |
+
+Reload the project with `GET /devices/{id}/projects/` to see them; there is no
+`GET /projects/{id}`.
+
+### Then, per field
+
 | Field | Airtable-linked job | LabOS-only job |
 |---|---|---|
 | `project_id` | from the picker | from the picker |
 | `type` | from `Requirement Code` (`FORCED_ENTRY` → Forced Entry, `ANSI_IMPACT` → ANSI Z97.1) | operator chooses |
-| `required_option` | `Required Option` | operator types |
+| `required_option` | `Required Option`, copied verbatim — **may be blank, and blank is legal** | operator types, or leaves blank |
 | `missile`, `missile_weight` | ~~`Missile Type`, `Missile Weight`~~ **withdrawn 2026-09-10** — never pre-filled again | operator types, or leaves blank |
 | `impact_family` | **not yours to send** — resolved from the bound section's requirement code | operator chooses `SMI` or `LMI` |
 | `impact_level` | operator chooses `D` or `E`, LMI only | same |
@@ -230,11 +341,22 @@ project once sees all five test types.
 **Both columns must work.** A LabOS-only job has no Airtable identity and is
 fully testable — that is the normal mode, not a degraded one.
 
-### Impact classification — built 2026-09-10, **not yet deployed**
+### Impact classification — implemented, verified in Testing, not deployed to Production
 
-The routes below behave this way in the codebase now. **Nothing is deployed**, and the two Airtable
-fields do not exist in any base yet — so build against this, but do not expect it from a running
-instance until the deploy lands.
+Status, stated precisely, because "not deployed" on its own has misled before:
+
+| | |
+|---|---|
+| **Implemented in the current branch** | yes — `feature/labos-airtable`, and the routes below behave this way now |
+| **Verified against the live Testing base** | yes — TA7 real-wire probe, 64/64, 2026-09-11 |
+| **Deployed to the `management` node** | **no** |
+| **Applied to the Production Airtable base** | **no.** Production is untouched at 142 fields |
+
+`Impact Classification` `fldMY7DiiuP9kbQbL` and `Target Impact Velocity`
+`fldhywP9YpsmoWWT1` **do exist — in the Testing base**, applied 2026-09-11. They
+are deliberately absent from Production until the schema request is accepted, and
+`preflight` asserts that absence on every run. So build against this; just do not
+expect it from the *production* node until the deploy lands.
 
 Impact requirements no longer arrive from Airtable as `Missile Type` / `Missile Weight` /
 `Impact Velocity`. Two LabOS-owned values replace them:
@@ -294,9 +416,11 @@ the photograph requirement, and impact location on the shot.
   because a per-impact photograph is still evidence of the attempt — so when
   rendering an impact's gallery, read the impact's list, not the attempt's, or
   the same file appears twice.
-- **A photograph count of zero is normal.** Impacts need not each be
-  photographed; the attempt only needs at least one photograph overall to
-  finish.
+- **⚠️ A photograph count of zero is no longer normal on an impact.** That was
+  true while one attempt held several impacts. One attempt is now one impact, so
+  an impact with no photograph is an attempt that can only be aborted, never
+  completed. Forced Entry and ANSI are the opposite: they need **no** photograph
+  to finish, only a `result`.
 
 ---
 
@@ -316,9 +440,31 @@ The schema is built to allow it: both live in `manual_tests` with a `type`
 discriminator, so adding type-specific columns or a JSON detail block is
 additive. `required_option` already carries the grade or class as free text.
 
-**No dedicated Airtable scalar is added for either** — `Test Type` and
-`Test Result` are both single-selects there, so their reporting filters and
-groups both workflows natively. That stays true whatever detail we add locally.
+**⚠️ Two dedicated Airtable scalars now exist — this paragraph said the opposite
+until 2026-09-11.** DG8 was closed on the reasoning that `Test Type` and
+`Test Result` are both single-selects and filter natively. **The product owner
+reopened it on 2026-09-10** — question 2 came back **NO**, *"they are different
+under different standards"* — so TA6 added:
+
+| Field | Table | Populated for | Testing field ID |
+|---|---|---|---|
+| `Forced Entry Result` | `LabOS Raw Data Table` | `Test Type = Forced Entry` only | `fldAHuPzZHZEj0Cjt` |
+| `ANSI Result` | `LabOS Raw Data Table` | `Test Type = ANSI Z97.1` only | `fldmCKJV95N9uL7xt` |
+
+**Alongside `Test Result`, not instead of it.** `Test Result` still carries the
+verdict for all five types. The dedicated field is *the same value on its own
+axis* — same four options, same `Pass`→`Passed` wire translation, same
+`Pending`-at-terminal lifecycle — projected by type in `mapping.py`. On the other
+four types the key is **omitted entirely**, never sent blank.
+
+**Nothing changes for the UI.** There is one verdict control; the backend
+projects it. Do not offer a second result field, and do not ask the operator for
+a per-standard result — it is derived from the reviewer's `test_result`, not
+entered.
+
+`Failure Notes` was **not** added: he named two fields, and a third on inference
+is not his decision. Applied to the Testing base 2026-09-11 (162 → 164);
+Production untouched at 142.
 
 ---
 
