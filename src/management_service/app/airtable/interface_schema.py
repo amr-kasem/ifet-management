@@ -35,7 +35,14 @@ TOKEN_ENV = {"testing": "AIRTABLE_TOKEN", "production": "AIRTABLE_TOKEN_PRODUCTI
 COLUMNS = [
     "airtable_table", "airtable_table_id", "airtable_field",
     "field_id_testing", "field_id_production", "in_testing", "in_production",
-    "airtable_type", "choices",
+    "airtable_type", "choices", "precision",
+    # **Per base, not merged.** The columns above describe the field as it is
+    # in Testing where it exists there, which is what LabOS validated against.
+    # These three say what *production* actually holds, so a type or an option
+    # set that has diverged between the two bases is visible rather than
+    # averaged away — and the production change spec can emit CHANGE TYPE or
+    # CHANGE OPTIONS instead of a silent KEEP.
+    "airtable_type_production", "choices_production", "precision_production",
     "labos_use", "direction", "labos_source", "write_phase",
     "status", "delivery_state", "owner", "rule",
 ]
@@ -69,6 +76,20 @@ def fetch_tables(base_id, token):
 def choices_of(field):
     opts = (field.get("options") or {}).get("choices") or []
     return " | ".join(c.get("name", "") for c in opts)
+
+
+def precision_of(field):
+    """Numeric precision, as the base actually holds it.
+
+    Emitted because **type is not the contract for a number**: precision 0
+    silently truncates 50.25 ft/s to 50, and it would pass any type check
+    while doing it. The production change spec needs it to tell an Airtable
+    engineer what to create, so it has to come from the live schema rather
+    than from a document describing the live schema.
+    """
+    opts = field.get("options") or {}
+    p = opts.get("precision")
+    return "" if p is None else str(p)
 
 
 def build(live, register):
@@ -120,6 +141,10 @@ def build(live, register):
             "in_production": "yes" if p_f else "no",
             "airtable_type": (any_f or {}).get("type") or (r or {}).get("airtable_type", ""),
             "choices": choices_of(any_f) if any_f else "",
+            "precision": precision_of(any_f) if any_f else "",
+            "airtable_type_production": (p_f or {}).get("type", ""),
+            "choices_production": choices_of(p_f) if p_f else "",
+            "precision_production": precision_of(p_f) if p_f else "",
             "labos_use": use,
             "direction": direction,
             "labos_source": (r or {}).get("labos_source", ""),

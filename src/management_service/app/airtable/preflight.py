@@ -341,14 +341,42 @@ def main(argv=None):
             # Compared against Testing, because Testing is the base being
             # replicated: a pre-existing field whose type differs there is
             # exactly the retype the document says did not happen.
-            if r["action"] == "KEEP" and in_test and r.get("type"):
-                live_type = test_s.get(tid, {}).get(r["field"])
-                if live_type and live_type != r["type"]:
+            # **The withdrawn three, now stated rather than omitted.** The
+            # spec used to drop them silently, so the sheet could not tell
+            # "not considered" from "decided against". They must be in
+            # Testing and absent from production, which is the same pair of
+            # facts check 1a and check 2 assert from the other direction.
+            if r["action"] == "DO NOT PROMOTE / DEPRECATED":
+                if in_prod:
+                    bad += 1
+                    fails.append(
+                        f"spec says DO NOT PROMOTE {r['field']!r} but "
+                        "production already has it")
+                if not in_test:
+                    bad += 1
+                    fails.append(
+                        f"spec says DO NOT PROMOTE {r['field']!r} but it is "
+                        "not in Testing either, so there is nothing to withhold")
+
+            live_type = test_s.get(tid, {}).get(r["field"])
+            if r["action"] == "KEEP" and in_test and r.get("airtable_type"):
+                if live_type and live_type != r["airtable_type"]:
                     bad += 1
                     fails.append(
                         f"{r['field']!r} in {r['table']} is {live_type!r} in "
-                        f"Testing but the spec says {r['type']!r} — the "
+                        f"Testing but the spec says {r['airtable_type']!r} — the "
                         "document claims 0 fields were retyped")
+            # A KEEP row is a claim that production and Testing agree. The
+            # generator compares them; this asserts the generator was run
+            # against the bases as they are now rather than as they were.
+            if r["action"] == "KEEP" and in_test and in_prod:
+                prod_type = prod_s.get(tid, {}).get(r["field"])
+                if live_type and prod_type and live_type != prod_type:
+                    bad += 1
+                    fails.append(
+                        f"{r['field']!r} is {prod_type!r} in production and "
+                        f"{live_type!r} in Testing, but the spec says KEEP — "
+                        "regenerate it; that is a CHANGE TYPE row")
         print(f"   {len(rows)} rows checked, {bad} disagree with the live bases")
         print(f"   including the type of every pre-existing field, not just "
               f"its presence")
