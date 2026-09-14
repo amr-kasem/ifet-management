@@ -1000,6 +1000,68 @@ class ALabosOnlyTestCanAcquireItsFamily(_Base):
         self.assertEqual(200, self.patch(t["id"], impact_level="E",
                                          target_velocity=55.0).status_code)
 
+    def test_an_unclassified_test_cannot_start_an_attempt(self):
+        """**The strand, closed at the near end.**
+
+        The family is fixed by the first attempt, but the classification is
+        only *demanded* when an attempt completes. Between those two moments a
+        test started without a family had no way forward: PATCH answered 409
+        (execution has begun), `/finish` answered 400 (no classification), and
+        abort was the only exit. Refusing the start removes the state instead
+        of adding a fourth escape from it.
+        """
+        t = self.blank()
+        r = self.client.post(f"{self.URL}{t['id']}/trials",
+                             json={"operator_name": "technician-1"})
+        self.assertEqual(400, r.status_code, r.text)
+        self.assertIn("no missile classification", r.json()["detail"])
+
+        # ...and it starts perfectly well once the family is there.
+        self.patch(t["id"], impact_family="SMI", target_velocity=130.0)
+        self.start("/projects/1/impact-tests", t["id"])
+
+    def test_lmi_without_a_level_may_still_start(self):
+        """Only the *family* is required up front, not the level.
+
+        An LMI test with no level is not stranded: aborts do not count as
+        completed attempts, so PATCH can still supply the level while the
+        attempt is open. Refusing this start would move a deadline rather than
+        close a gap.
+        """
+        t = self.blank()
+        self.patch(t["id"], impact_family="LMI", target_velocity=50.0)
+        attempt = self.start("/projects/1/impact-tests", t["id"])
+        self.assertEqual(200, self.patch(t["id"], impact_level="D").status_code)
+        self.assertEqual(200, self.finish(attempt["id"],
+                                          abort_reason="Equipment Fault").status_code)
+
+    def test_a_test_already_stranded_can_still_reach_its_open_attempt(self):
+        """Recovery for rows that predate the guard.
+
+        A test stranded by the old behaviour still has an open attempt, and the
+        operator's only exit is to abort it — which needs its id. So the guard
+        is skipped when an attempt is already open: Start stays idempotent and
+        hands back the attempt rather than a 400 that hides it.
+        """
+        from app.data.models import MissileImpactTest
+        t = self.blank()
+        self.patch(t["id"], impact_family="SMI", target_velocity=130.0)
+        attempt = self.start("/projects/1/impact-tests", t["id"])
+
+        # Reproduce the legacy state: an open attempt on a family-less test.
+        s = self.Session()
+        s.query(MissileImpactTest).filter_by(id=t["id"]).update(
+            {"impact_family": None})
+        s.commit()
+        s.close()
+
+        r = self.client.post(f"{self.URL}{t['id']}/trials",
+                             json={"operator_name": "technician-1"})
+        self.assertEqual(200, r.status_code, r.text)
+        self.assertEqual(attempt["id"], r.json()["id"])
+        self.assertEqual(200, self.finish(attempt["id"],
+                                          abort_reason="Unclassified test").status_code)
+
     def test_switching_to_smi_while_a_level_is_stored_is_refused(self):
         t = self.blank()
         self.patch(t["id"], impact_family="LMI", impact_level="D")

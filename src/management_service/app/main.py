@@ -67,7 +67,11 @@ def get_db():
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Frontend origin
-    allow_methods=["GET","POST","PUT", "DELETE"],  # Allow all HTTP methods (POST, GET, etc.)
+    # PATCH is in the list because it carries a route: the impact test's
+    # classification is set after creation, and Starlette answers a preflight
+    # for a method missing here with 400 Disallowed CORS method -- so a route
+    # that works under curl is unreachable from every browser.
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     allow_headers=["*"],  # Allow all headers
 )
 
@@ -1877,7 +1881,37 @@ def list_impact_tests(project_id: int, db: Session = Depends(get_db)):
 def start_impact_test_attempt(project_id: int, test_id: int,
                               body: AttemptStartSchema,
                               db: Session = Depends(get_db)):
+    """Begin an impact attempt. The family has to be known before it does.
+
+    **The two deadlines are not the same one, and the gap between them used to
+    strand a test.** The family is write-once at the *first attempt* (any
+    attempt, aborted included), while the classification is *required* at the
+    moment an attempt completes. Starting without a family therefore reached a
+    state with no way forward: the PATCH that would supply it answered 409
+    because execution had begun, and `/finish` answered 400 because there was
+    no classification to record. Abort was the only exit, and it cost the
+    attempt.
+
+    Refusing the start closes the gap without moving either deadline. The rule
+    is the write-once rule read forwards: if the first attempt fixes the
+    family, the first attempt has to have one to fix.
+    """
     test = _require_test(db, MissileImpactTest, project_id, test_id, "Impact test")
+    if test.impact_family is None and attempts.open_attempt_for(
+            db, ImpactTestResult, "missile_impact_test_id", test.id) is None:
+        # Guarded on "no open attempt" so that a test already stranded by the
+        # old behaviour still answers a repeated Start with its open attempt
+        # rather than a 400 -- that attempt is what the operator has to abort.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "This impact test has no missile classification, and an "
+                "attempt fixes it permanently. Set impact_family (with "
+                "impact_level for LMI) before starting."
+                if not test.airtable_section_id else
+                "This impact test is bound to Airtable Protocol Section "
+                f"{test.airtable_section_id} but carries no impact family. "
+                "Re-run the requirement import before starting."))
     return _start_attempt(db, ImpactTestResult, test, "Impact",
                           body.operator_name, missile_impact_test_id=test.id)
 
