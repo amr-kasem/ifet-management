@@ -189,6 +189,38 @@ class TheCommittedApiContractIsCurrent(unittest.TestCase):
                 sorted(snapshot["paths"][path]), sorted(live["paths"][path]),
                 f"{path}: the snapshot's methods differ from the app's")
 
+    def test_the_snapshot_matches_the_live_payload_shapes(self):
+        """Routes were compared; the shapes they carry were not.
+
+        Added 2026-09-14, because the drift this class exists to prevent
+        happened again one level down. `PhotoSchema` returned no location for
+        the file it had just stored — the stored name is a `uuid4` that appeared
+        in no field and no route — so an operator could upload evidence and no
+        client could display it again. Every route was present and correct; only
+        the payload was wrong, and this gate looked at routes.
+
+        A path list is not a contract. What somebody builds against is the
+        component schemas, so compare those too.
+        """
+        import json                                          # noqa: PLC0415
+        from app import main                                 # noqa: PLC0415
+        snapshot = json.loads((ROOT.parent / "openapi.json").read_text())
+        live = main.app.openapi()
+        want = live["components"]["schemas"]
+        got = snapshot["components"]["schemas"]
+        self.assertEqual(
+            sorted(got), sorted(want),
+            "openapi.json does not describe the same models as the app. "
+            "Regenerate it:\n"
+            "  python -c \"import json;from app.main import app;"
+            "print(json.dumps(app.openapi(),indent=2))\" > openapi.json")
+        for name in sorted(want):
+            self.assertEqual(
+                got[name], want[name],
+                f"{name}: the snapshot's shape differs from the app's. A client "
+                "built against the snapshot would send or expect the wrong "
+                "payload, and every route would still look correct.")
+
 
 if __name__ == "__main__":
     unittest.main()

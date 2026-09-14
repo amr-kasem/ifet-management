@@ -1,4 +1,5 @@
 import uuid
+from pathlib import PurePath
 
 from sqlalchemy import (
     Column, Integer, String, Float, ForeignKey, Boolean, DateTime, Text, JSON,
@@ -377,6 +378,29 @@ class TestPhoto(Base):
 
     test_result = relationship("TestResult", back_populates="photos")
     shot = relationship("Shot", back_populates="photos")
+
+    @property
+    def url(self):
+        """Where a client fetches this photograph. Derived, never stored.
+
+        **From the basename of `path`, not from `path`.** `path` is
+        `str(uploads_dir / stored)` and `uploads_dir` is
+        `Path(os.getenv("LABOS_UPLOADS_DIR", "uploads"))`. Unset, it is the
+        relative `uploads/<uuid>.jpg`, which happens to match the `/uploads`
+        static mount; set to a bind mount — which the class docstring above
+        recommends, and which the test harness already does — it becomes
+        `/tmp/labos-uploads/<uuid>.jpg`, which that mount does not serve and
+        which discloses the server's layout. The basename is the one part the
+        mount serves, under every value of the variable.
+
+        Root-relative rather than absolute: the mount is on this app, so there
+        is no host to hard-code and nothing to reconfigure behind a proxy.
+
+        A property and not a column because it is derived: a column would be a
+        second thing to keep in step with `path`, and the two would diverge the
+        first time a file moved.
+        """
+        return f"/uploads/{PurePath(self.path).name}"
 
 
 class CyclicTest(Base, AirtableProtocolRef):

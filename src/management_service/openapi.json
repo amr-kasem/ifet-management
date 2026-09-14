@@ -2222,6 +2222,7 @@
     "/projects/{project_id}/impact-tests/{test_id}/trials": {
       "post": {
         "summary": "Start Impact Test Attempt",
+        "description": "Begin an impact attempt. The family has to be known before it does.\n\n**The two deadlines are not the same one, and the gap between them used to\nstrand a test.** The family is write-once at the *first attempt* (any\nattempt, aborted included), while the classification is *required* at the\nmoment an attempt completes. Starting without a family therefore reached a\nstate with no way forward: the PATCH that would supply it answered 409\nbecause execution had begun, and `/finish` answered 400 because there was\nno classification to record. Abort was the only exit, and it cost the\nattempt.\n\nRefusing the start closes the gap without moving either deadline. The rule\nis the write-once rule read forwards: if the first attempt fixes the\nfamily, the first attempt has to have one to fix.",
         "operationId": "start_impact_test_attempt_projects__project_id__impact_tests__test_id__trials_post",
         "parameters": [
           {
@@ -4578,14 +4579,20 @@
               }
             ],
             "title": "Shot Id"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
           }
         },
         "type": "object",
         "required": [
           "id",
-          "filename"
+          "filename",
+          "url"
         ],
-        "title": "PhotoSchema"
+        "title": "PhotoSchema",
+        "description": "One photograph, and **where to fetch it**.\n\n`filename` is what the operator's device called the file \u2014 it is\n`upload.filename`, neither unique nor the name on disk. The stored name is a\nfresh `uuid4`, minted in `_save_photo` and, until 2026-09-14, returned by\nnothing: no field carried it and no route served a photograph, so evidence\ncould be uploaded and never displayed again. No client could work around it,\nbecause the uuid appeared nowhere else in the API.\n\n**`url`, not `path`.** The obvious fix is to publish `TestPhoto.path`, and it\nwould appear to work \u2014 until `LABOS_UPLOADS_DIR` is set, at which point the\nsame field becomes an unservable absolute path and a disclosure of the\nserver's layout. `TestPhoto.url` derives it from the stored basename\ninstead, which is correct under every value of that variable; see the\nproperty's docstring for the whole argument."
       },
       "ProjectCreateSchema": {
         "properties": {

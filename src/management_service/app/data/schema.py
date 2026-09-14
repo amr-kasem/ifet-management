@@ -313,6 +313,23 @@ MANUAL_TEST_TYPES = ("Forced Entry", "ANSI Z97.1")
 
 
 class PhotoSchema(BaseModel):
+    """One photograph, and **where to fetch it**.
+
+    `filename` is what the operator's device called the file — it is
+    `upload.filename`, neither unique nor the name on disk. The stored name is a
+    fresh `uuid4`, minted in `_save_photo` and, until 2026-09-14, returned by
+    nothing: no field carried it and no route served a photograph, so evidence
+    could be uploaded and never displayed again. No client could work around it,
+    because the uuid appeared nowhere else in the API.
+
+    **`url`, not `path`.** The obvious fix is to publish `TestPhoto.path`, and it
+    would appear to work — until `LABOS_UPLOADS_DIR` is set, at which point the
+    same field becomes an unservable absolute path and a disclosure of the
+    server's layout. `TestPhoto.url` derives it from the stored basename
+    instead, which is correct under every value of that variable; see the
+    property's docstring for the whole argument.
+    """
+
     id: int
     filename: str
     note: Optional[str] = None
@@ -320,6 +337,13 @@ class PhotoSchema(BaseModel):
     # Set when the photograph shows one specific impact; None when it belongs
     # to the attempt as a whole.
     shot_id: Optional[int] = None
+    # `TestPhoto.url`, a derived property rather than a column. Declared here as
+    # an ordinary field on purpose: a `computed_field` over an excluded `path`
+    # works identically, but makes this model's input and output shapes differ,
+    # which splits it — and every schema that nests it — into `-Input`/`-Output`
+    # components in `openapi.json`. Five renamed components in the document the
+    # UI developer is building against, to publish one string.
+    url: str
 
     class Config:
         from_attributes = True

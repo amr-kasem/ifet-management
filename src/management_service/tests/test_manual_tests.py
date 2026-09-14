@@ -1160,5 +1160,104 @@ class TheDatabaseRefusesSmiWithALevel(_Base):
             s.close()
 
 
+@unittest.skipIf(TestClient is None, "fastapi not installed in this environment")
+class AnUploadedPhotographCanBeFetchedAgain(_Base):
+    """The upload response has to say where the file is. Nothing else can.
+
+    `filename` is the operator's device filename — not unique, not the name on
+    disk. The stored name is a fresh `uuid4`, and until 2026-09-14 it was
+    returned by no field and served by no route, so a photograph could be
+    uploaded and never displayed again. No client could work around it: the
+    uuid appeared nowhere in the API.
+
+    These tests pin the response *shape*, because that is what was missing and
+    the suite passed the whole time — every other photo test here asserts a
+    status code and never looks at the body.
+    """
+
+    def setUp(self):
+        super().setUp()
+        t = self.client.post("/projects/1/manual-tests/",
+                             json={"type": "Forced Entry"}).json()
+        self.test_id = t["id"]
+        self.attempt = self.start("/projects/1/manual-tests", t["id"])
+
+    def _upload(self, name="evidence.jpg"):
+        r = self.client.post(f"/test-results/{self.attempt['id']}/photos",
+                             files=_jpeg(name))
+        self.assertEqual(r.status_code, 200, r.text)
+        return r.json()
+
+    def test_the_upload_response_carries_a_url(self):
+        body = self._upload("IMG_4821.jpg")
+        self.assertIn("url", body,
+                      "the upload response gives no location for the file it "
+                      "just stored, and nothing else in the API carries the "
+                      "stored name")
+        self.assertTrue(body["url"].startswith("/uploads/"), body["url"])
+
+    def test_the_url_names_the_stored_file_not_the_uploaded_one(self):
+        """Device filenames are not unique — two operators both send IMG_0001."""
+        body = self._upload("IMG_4821.jpg")
+        self.assertEqual(body["filename"], "IMG_4821.jpg")
+        self.assertNotIn("IMG_4821", body["url"],
+                         "the URL must name the stored uuid, not the "
+                         "operator's filename")
+
+    def test_the_server_filesystem_path_is_never_published(self):
+        """`path` is `LABOS_UPLOADS_DIR/<uuid>` — a server path, not a URL.
+
+        Publishing it would disclose the layout, and whenever the variable
+        points at a bind mount it would not resolve against `/uploads` either.
+        """
+        self.assertNotIn("path", self._upload())
+
+    def test_the_url_survives_an_absolute_uploads_dir(self):
+        """The case that makes `path` wrong and a derived `url` right.
+
+        This harness already sets `LABOS_UPLOADS_DIR=/tmp/labos-uploads`, so the
+        stored path here is absolute. A response built from it would be
+        unservable; one built from its basename is correct either way.
+        """
+        from app.main import uploads_dir                     # noqa: PLC0415
+        url = self._upload()["url"]
+        self.assertEqual(url.count("/uploads/"), 1, url)
+        self.assertNotIn(str(uploads_dir), url)
+        self.assertTrue((uploads_dir / url.rsplit("/", 1)[1]).exists(),
+                        "the URL does not name a file that was actually stored")
+
+    def test_a_per_impact_photograph_is_addressable_too(self):
+        # One rig runs one test at a time, so the Forced Entry attempt this
+        # class starts in setUp has to end before an impact one can begin.
+        self._finish(self.attempt["id"])
+        t = self.client.post("/projects/1/impact-tests/",
+                             json={"impact_family": "LMI", "impact_level": "D",
+                                   "target_velocity": 50.0}).json()
+        attempt = self.start("/projects/1/impact-tests", t["id"])
+        shot = self.client.post(f"/test-results/{attempt['id']}/shots",
+                                json={"result": True}).json()
+        r = self.client.post(f"/shots/{shot['id']}/photos", files=_jpeg())
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertTrue(r.json()["url"].startswith("/uploads/"), r.text)
+
+    def test_the_photograph_is_listed_on_the_attempt_with_its_url(self):
+        """A client that reloads the attempt must get the location too.
+
+        `PhotoSchema` is nested in `AttemptSchema`, so the gallery is rebuilt
+        from the attempt list rather than from the upload replies — a page
+        refresh loses those. The fix has to reach the read path, not only the
+        route that stores the file.
+
+        Note this is the **trials** route. `GET /test-results/{id}` is the
+        legacy shape and returns five columns with no photographs at all.
+        """
+        self._upload()
+        got = self.client.get(f"/projects/1/manual-tests/{self.test_id}/trials")
+        self.assertEqual(got.status_code, 200, got.text)
+        photos = got.json()[0]["photos"]
+        self.assertEqual(len(photos), 1, got.text)
+        self.assertTrue(photos[0]["url"].startswith("/uploads/"), photos[0])
+
+
 if __name__ == "__main__":
     unittest.main()
